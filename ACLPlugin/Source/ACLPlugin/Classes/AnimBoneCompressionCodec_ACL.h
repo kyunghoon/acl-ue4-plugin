@@ -37,7 +37,7 @@ class UAnimBoneCompressionCodec_ACL : public UAnimBoneCompressionCodec_ACLBase
 	// UAnimBoneCompressionCodec_ACLBase implementation
 	virtual void GetCompressionSettings(acl::compression_settings& OutSettings) const override;
 	virtual TArray<class USkeletalMesh*> GetOptimizationTargets() const override { return OptimizationTargets; }
-	virtual ACLSafetyFallbackResult ExecuteSafetyFallback(acl::iallocator& Allocator, const acl::compression_settings& Settings, const acl::track_array_qvvf& RawClip, const acl::track_array_qvvf& BaseClip, const acl::compressed_tracks& CompressedClipData, const FCompressibleAnimData& CompressibleAnimData, FCompressibleAnimDataResult& OutResult);
+	virtual ACLSafetyFallbackResult ExecuteSafetyFallback(acl::iallocator& Allocator, const acl::compression_settings& Settings, const acl::track_array_qvvf& RawClip, const acl::track_array_qvvf& BaseClip, const acl::compressed_tracks& CompressedClipData, const acl::compressed_database* CompressedDatabase, const FCompressibleAnimData& CompressibleAnimData, FCompressibleAnimDataResult& OutResult);
 #endif
 
 	// UAnimBoneCompressionCodec implementation

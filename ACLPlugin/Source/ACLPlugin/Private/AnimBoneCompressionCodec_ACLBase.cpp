@@ -214,20 +214,36 @@ bool UAnimBoneCompressionCodec_ACLBase::Compress(const FCompressibleAnimData& Co
 	}
 
 	const acl::additive_clip_format8 AdditiveFormat = acl::additive_clip_format8::additive0;
+	const bool bUseStreamingDatabase = UseDatabase();
 
 	acl::output_stats Stats;
 	acl::compressed_tracks* CompressedTracks = nullptr;
-	acl::error_result CompressionResult = acl::compress_track_list(AllocatorImpl, ACLTracks, Settings, ACLBaseTracks, AdditiveFormat, CompressedTracks, Stats);
+	acl::compressed_database* CompressedDatabase = nullptr;
+	acl::error_result CompressionResult;
+	if (bUseStreamingDatabase)
+	{
+		CompressionResult = acl::compress_track_list(AllocatorImpl, ACLTracks, Settings, ACLBaseTracks, AdditiveFormat, CompressedTracks, CompressedDatabase, Stats);
+	}
+	else
+	{
+		CompressionResult = acl::compress_track_list(AllocatorImpl, ACLTracks, Settings, ACLBaseTracks, AdditiveFormat, CompressedTracks, Stats);
+	}
 
 	// Make sure if we managed to compress, that the error is acceptable and if it isn't, re-compress again with safer settings
 	// This should be VERY rare with the default threshold
 	if (CompressionResult.empty())
 	{
-		const ACLSafetyFallbackResult FallbackResult = ExecuteSafetyFallback(AllocatorImpl, Settings, ACLTracks, ACLBaseTracks, *CompressedTracks, CompressibleAnimData, OutResult);
+		const ACLSafetyFallbackResult FallbackResult = ExecuteSafetyFallback(AllocatorImpl, Settings, ACLTracks, ACLBaseTracks, *CompressedTracks, CompressedDatabase, CompressibleAnimData, OutResult);
 		if (FallbackResult != ACLSafetyFallbackResult::Ignored)
 		{
 			AllocatorImpl.deallocate(CompressedTracks, CompressedTracks->get_size());
 			CompressedTracks = nullptr;
+
+			if (CompressedDatabase != nullptr)
+			{
+				AllocatorImpl.deallocate(CompressedDatabase, CompressedDatabase->get_size());
+				CompressedDatabase = nullptr;
+			}
 
 			return FallbackResult == ACLSafetyFallbackResult::Success;
 		}
@@ -242,6 +258,7 @@ bool UAnimBoneCompressionCodec_ACLBase::Compress(const FCompressibleAnimData& Co
 	checkSlow(CompressedTracks->is_valid(true).empty());
 
 	const uint32 CompressedClipDataSize = CompressedTracks->get_size();
+	const uint32 CompressedDatabaseSize = CompressedDatabase != nullptr ? CompressedDatabase->get_size() : 0;
 
 	OutResult.CompressedByteStream.Empty(CompressedClipDataSize);
 	OutResult.CompressedByteStream.AddUninitialized(CompressedClipDataSize);
@@ -255,16 +272,40 @@ bool UAnimBoneCompressionCodec_ACLBase::Compress(const FCompressibleAnimData& Co
 
 #if !NO_LOGGING
 	{
-		acl::decompression_context<acl::debug_transform_decompression_settings> Context;
-		Context.initialize(*CompressedTracks);
+		acl::decompression_context<acl::debug_transform_decompression_settings, acl::debug_database_settings> Context;
+		acl::database_context<acl::debug_database_settings> DatabaseContext;
+		if (CompressedDatabase != nullptr)
+		{
+			DatabaseContext.initialize(AllocatorImpl, *CompressedDatabase);
+			Context.initialize(*CompressedTracks, DatabaseContext);
+		}
+		else
+		{
+			Context.initialize(*CompressedTracks);
+		}
+
 		const acl::track_error TrackError = acl::calculate_compression_error(AllocatorImpl, ACLTracks, Context, *Settings.error_metric, ACLBaseTracks);
 
 		UE_LOG(LogAnimationCompression, Verbose, TEXT("ACL Animation compressed size: %u bytes"), CompressedClipDataSize);
+		if (CompressedDatabase != nullptr)
+		{
+			UE_LOG(LogAnimationCompression, Verbose, TEXT("ACL Animation compressed database size: %u bytes"), CompressedDatabaseSize);
+		}
+
 		UE_LOG(LogAnimationCompression, Verbose, TEXT("ACL Animation error: %.4f cm (bone %u @ %.3f)"), TrackError.error, TrackError.index, TrackError.sample_time);
 	}
 #endif
 
 	AllocatorImpl.deallocate(CompressedTracks, CompressedClipDataSize);
+
+	if (CompressedDatabase != nullptr)
+	{
+		RegisterDatabase(CompressibleAnimData, CompressedDatabase, OutResult);
+
+		// No longer need this instance, free it
+		AllocatorImpl.deallocate(CompressedDatabase, CompressedDatabaseSize);
+	}
+
 	return true;
 }
 
@@ -286,7 +327,7 @@ void UAnimBoneCompressionCodec_ACLBase::PopulateDDCKey(FArchive& Ar)
 	}
 }
 
-ACLSafetyFallbackResult UAnimBoneCompressionCodec_ACLBase::ExecuteSafetyFallback(acl::iallocator& Allocator, const acl::compression_settings& Settings, const acl::track_array_qvvf& RawClip, const acl::track_array_qvvf& BaseClip, const acl::compressed_tracks& CompressedClipData, const FCompressibleAnimData& CompressibleAnimData, FCompressibleAnimDataResult& OutResult)
+ACLSafetyFallbackResult UAnimBoneCompressionCodec_ACLBase::ExecuteSafetyFallback(acl::iallocator& Allocator, const acl::compression_settings& Settings, const acl::track_array_qvvf& RawClip, const acl::track_array_qvvf& BaseClip, const acl::compressed_tracks& CompressedClipData, const acl::compressed_database* CompressedDatabase, const FCompressibleAnimData& CompressibleAnimData, FCompressibleAnimDataResult& OutResult)
 {
 	return ACLSafetyFallbackResult::Ignored;
 }
