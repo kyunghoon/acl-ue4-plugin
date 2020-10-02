@@ -8,6 +8,8 @@
 #define WITH_ACL_CONSOLE_COMMANDS (!UE_BUILD_SHIPPING && !UE_BUILD_TEST && !NO_LOGGING)
 
 #if WITH_ACL_CONSOLE_COMMANDS
+#include "AnimBoneCompressionCodec_ACLDatabase.h"
+
 #include "AnimationCompression.h"
 #include "Animation/AnimBoneCompressionCodec.h"
 #include "Animation/AnimBoneCompressionSettings.h"
@@ -28,6 +30,8 @@ private:
 	// Console commands
 	void ListCodecs(const TArray<FString>& Args);
 	void ListAnimSequences(const TArray<FString>& Args);
+	void DatabaseStreamIn(const TArray<FString>& Args);
+	void DatabaseStreamOut(const TArray<FString>& Args);
 
 	TArray<IConsoleObject*> ConsoleCommands;
 #endif
@@ -259,6 +263,42 @@ void FACLPlugin::ListAnimSequences(const TArray<FString>& Args)
 
 	LogAnimationCompression.SetVerbosity(OldVerbosity);
 }
+
+void FACLPlugin::DatabaseStreamIn(const TArray<FString>& Args)
+{
+	const TArray<UAnimBoneCompressionCodec_ACLDatabase*> DatabaseCodecs = GetObjectInstancesSorted<UAnimBoneCompressionCodec_ACLDatabase>();
+	for (UAnimBoneCompressionCodec_ACLDatabase* DatabaseCodec : DatabaseCodecs)
+	{
+		if (DatabaseCodec->PreviewTier == -1 || DatabaseCodec->PreviewTier >= 1)
+		{
+			// Data is already all streamed in
+			continue;
+		}
+		else
+		{
+			// Data is all streamed out, stream it in
+			DatabaseCodec->PreviewTier = 1;
+		}
+	}
+}
+
+void FACLPlugin::DatabaseStreamOut(const TArray<FString>& Args)
+{
+	const TArray<UAnimBoneCompressionCodec_ACLDatabase*> DatabaseCodecs = GetObjectInstancesSorted<UAnimBoneCompressionCodec_ACLDatabase>();
+	for (UAnimBoneCompressionCodec_ACLDatabase* DatabaseCodec : DatabaseCodecs)
+	{
+		if (DatabaseCodec->PreviewTier == -1 || DatabaseCodec->PreviewTier >= 1)
+		{
+			// Data is already all streamed in, stream it out
+			DatabaseCodec->PreviewTier = 0;
+		}
+		else
+		{
+			// Data is already all streamed out
+			continue;
+		}
+	}
+}
 #endif
 
 void FACLPlugin::StartupModule()
@@ -277,6 +317,20 @@ void FACLPlugin::StartupModule()
 			TEXT("ACL.ListAnimSequences"),
 			TEXT("Dumps statistics about animation sequences to the log."),
 			FConsoleCommandWithArgsDelegate::CreateRaw(this, &FACLPlugin::ListAnimSequences),
+			ECVF_Default
+		));
+
+		ConsoleCommands.Add(IConsoleManager::Get().RegisterConsoleCommand(
+			TEXT("ACL.DatabaseStreamIn"),
+			TEXT("Trigger streaming in of the next tier of data for each database instance."),
+			FConsoleCommandWithArgsDelegate::CreateRaw(this, &FACLPlugin::DatabaseStreamIn),
+			ECVF_Default
+		));
+
+		ConsoleCommands.Add(IConsoleManager::Get().RegisterConsoleCommand(
+			TEXT("ACL.DatabaseStreamOut"),
+			TEXT("Trigger streaming out of the current tier of data for each database instance."),
+			FConsoleCommandWithArgsDelegate::CreateRaw(this, &FACLPlugin::DatabaseStreamOut),
 			ECVF_Default
 		));
 	}

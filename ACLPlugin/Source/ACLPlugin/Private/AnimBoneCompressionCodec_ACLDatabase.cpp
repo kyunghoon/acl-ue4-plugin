@@ -57,14 +57,11 @@ bool FACLDatabaseCompressedAnimData::IsValid() const
 // In non-shipping builds, check if the baked database contains our clip after the anim data is bound
 // In editor, register our database when bound and mark as stale as appropriate
 
-// In editor, add memory streamer and simulate streaming in/out
-// Add console command to simulate streaming in/out
-
 UAnimBoneCompressionCodec_ACLDatabase::UAnimBoneCompressionCodec_ACLDatabase(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
 #if WITH_EDITORONLY_DATA
-	// todo
+	PreviewTier = -1;
 #endif	// WITH_EDITORONLY_DATA
 }
 
@@ -226,6 +223,37 @@ void UAnimBoneCompressionCodec_ACLDatabase::ByteSwapOut(ICompressedAnimData& Ani
 	MemoryStream.Serialize(ACLAnimData.CompressedByteStream.GetData(), ACLAnimData.CompressedByteStream.Num());
 }
 
+class NullDatabaseStreamer final : public acl::idatabase_streamer
+{
+public:
+	NullDatabaseStreamer(const uint8_t* bulk_data, uint32_t bulk_data_size)
+		: m_bulk_data(bulk_data)
+		, m_bulk_data_size(bulk_data_size)
+	{
+	}
+
+	virtual bool is_initialized() const override {return m_bulk_data != nullptr; }
+
+	virtual const uint8_t* get_bulk_data() const override { return m_bulk_data; }
+
+	virtual void stream_in(uint32_t offset, uint32_t size, const std::function<void(bool success)>& continuation) override
+	{
+		continuation(true);
+	}
+
+	virtual void stream_out(uint32_t offset, uint32_t size, const std::function<void(bool success)>& continuation) override
+	{
+		continuation(true);
+	}
+
+private:
+	NullDatabaseStreamer(const NullDatabaseStreamer&) = delete;
+	NullDatabaseStreamer& operator=(const NullDatabaseStreamer&) = delete;
+
+	const uint8_t* m_bulk_data;
+	uint32_t m_bulk_data_size;
+};
+
 void UAnimBoneCompressionCodec_ACLDatabase::DecompressPose(FAnimSequenceDecompressionContext& DecompContext, const BoneTrackArray& RotationPairs, const BoneTrackArray& TranslationPairs, const BoneTrackArray& ScalePairs, TArrayView<FTransform>& OutAtoms) const
 {
 	ACLAllocator AllocatorImpl;
@@ -240,8 +268,16 @@ void UAnimBoneCompressionCodec_ACLDatabase::DecompressPose(FAnimSequenceDecompre
 #if WITH_EDITORONLY_DATA
 	const acl::compressed_database* CompressedDatabase = AnimData.GetCompressedDatabase();
 
-	DatabaseContext.initialize(AllocatorImpl, *CompressedDatabase);
+	NullDatabaseStreamer Streamer(CompressedDatabase->get_bulk_data(), CompressedDatabase->get_bulk_data_size());
+
+	DatabaseContext.initialize(AllocatorImpl, *CompressedDatabase, Streamer);
 	ACLContext.initialize(*CompressedClipData, DatabaseContext);
+
+	if (PreviewTier == -1 || PreviewTier >= 1)
+	{
+		// If we don't have a preview value or if we preview everything, stream everything in
+		DatabaseContext.stream_in();
+	}
 #else
 	ACLContext.initialize(*CompressedClipData);
 #endif
@@ -263,8 +299,16 @@ void UAnimBoneCompressionCodec_ACLDatabase::DecompressBone(FAnimSequenceDecompre
 #if WITH_EDITORONLY_DATA
 	const acl::compressed_database* CompressedDatabase = AnimData.GetCompressedDatabase();
 
-	DatabaseContext.initialize(AllocatorImpl, *CompressedDatabase);
+	NullDatabaseStreamer Streamer(CompressedDatabase->get_bulk_data(), CompressedDatabase->get_bulk_data_size());
+
+	DatabaseContext.initialize(AllocatorImpl, *CompressedDatabase, Streamer);
 	ACLContext.initialize(*CompressedClipData, DatabaseContext);
+
+	if (PreviewTier == -1 || PreviewTier >= 1)
+	{
+		// If we don't have a preview value or if we preview everything, stream everything in
+		DatabaseContext.stream_in();
+	}
 #else
 	ACLContext.initialize(*CompressedClipData);
 #endif
