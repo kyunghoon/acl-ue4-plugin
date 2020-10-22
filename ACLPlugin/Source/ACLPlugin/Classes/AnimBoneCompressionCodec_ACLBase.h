@@ -10,9 +10,10 @@
 #include <acl/compression/compression_settings.h>
 #include <acl/compression/track_array.h>
 #include <acl/core/compressed_database.h>
-#include <acl/core/compressed_tracks.h>
 #include <acl/core/iallocator.h>
 #endif
+
+#include <acl/core/compressed_tracks.h>
 
 #include "AnimBoneCompressionCodec_ACLBase.generated.h"
 

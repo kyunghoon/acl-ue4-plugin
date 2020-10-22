@@ -3,10 +3,12 @@
 #include "AnimBoneCompressionCodec_ACLDatabase.h"
 
 #if WITH_EDITORONLY_DATA
+#include "Animation/AnimBoneCompressionSettings.h"
 #include "Rendering/SkeletalMeshModel.h"
 
 #include "ACLImpl.h"
 
+#include <acl/compression/compress.h>
 #include <acl/compression/track_error.h>
 #include <acl/decompression/decompress.h>
 #endif	// WITH_EDITORONLY_DATA
@@ -27,7 +29,7 @@ void FACLDatabaseCompressedAnimData::SerializeCompressedData(FArchive& Ar)
 
 bool FACLDatabaseCompressedAnimData::IsValid() const
 {
-	if (CompressedByteStream.Num() == 0 || CompressedDatabase.Num() == 0)
+	if (CompressedByteStream.Num() == 0)
 	{
 		return false;
 	}
@@ -38,11 +40,18 @@ bool FACLDatabaseCompressedAnimData::IsValid() const
 		return false;
 	}
 
+#if WITH_EDITORONLY_DATA
+	if (CompressedDatabase.Num() == 0)
+	{
+		return false;
+	}
+
 	const acl::compressed_database* CompressedDatabaseData = acl::make_compressed_database(CompressedDatabase.GetData());
 	if (CompressedDatabaseData == nullptr || CompressedDatabaseData->is_valid(false).any())
 	{
 		return false;
 	}
+#endif
 
 	return true;
 }
@@ -59,6 +68,7 @@ bool FACLDatabaseCompressedAnimData::IsValid() const
 
 UAnimBoneCompressionCodec_ACLDatabase::UAnimBoneCompressionCodec_ACLDatabase(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
+	, DatabaseAsset(nullptr)
 {
 #if WITH_EDITORONLY_DATA
 	PreviewTier = -1;
@@ -107,69 +117,6 @@ void UAnimBoneCompressionCodec_ACLDatabase::GetCompressionSettings(acl::compress
 	OutSettings.level = GetCompressionLevel(CompressionLevel);
 }
 
-void UAnimBoneCompressionCodec_ACLDatabase::BeginDestroy()
-{
-	Super::BeginDestroy();
-
-	ACLAllocator AllocatorImpl;
-
-	for (TPair<FName, acl::compressed_database*>& Pair : SequenceToDatabaseMap)
-	{
-		//AllocatorImpl.deallocate(Pair.Value, Pair.Value->get_size());
-	}
-}
-
-void UAnimBoneCompressionCodec_ACLDatabase::Serialize(FArchive& Ar)
-{
-	Super::Serialize(Ar);
-
-#if WITH_EDITORONLY_DATA
-	if (!Ar.IsCooking())
-	{
-#if 0
-		if (Ar.IsSaving())
-		{
-			int32 NumEntries = SequenceToDatabaseMap.Num();
-			Ar << NumEntries;
-
-			for (TPair<FName, acl::compressed_database*>& Pair : SequenceToDatabaseMap)
-			{
-				Ar << Pair.Key;
-
-				int32 DataSize = Pair.Value->get_size();
-				Ar << DataSize;
-				Ar.Serialize(Pair.Value, DataSize);
-			}
-		}
-		else if (Ar.IsLoading())
-		{
-			ACLAllocator AllocatorImpl;
-
-			int32 NumEntries = 0;
-			Ar << NumEntries;
-
-			for (int32 EntryIndex = 0; EntryIndex < NumEntries; ++EntryIndex)
-			{
-				FName Key;
-				Ar << Key;
-
-				int32 DataSize = 0;
-				Ar << DataSize;
-
-				void* Buffer = AllocatorImpl.allocate(DataSize);
-				Ar.Serialize(Buffer, DataSize);
-
-				acl::compressed_database* CompressedDatabase = acl::make_compressed_database(Buffer);
-				check(CompressedDatabase != nullptr && CompressedDatabase->is_valid(false).empty());
-
-				SequenceToDatabaseMap.Add(Key, CompressedDatabase);
-			}
-		}
-#endif
-	}
-#endif
-}
-
 void UAnimBoneCompressionCodec_ACLDatabase::PopulateDDCKey(FArchive& Ar)
 {
 	Super::PopulateDDCKey(Ar);
@@ -177,7 +124,7 @@ void UAnimBoneCompressionCodec_ACLDatabase::PopulateDDCKey(FArchive& Ar)
 	acl::compression_settings Settings;
 	GetCompressionSettings(Settings);
 
-	uint32 ForceRebuildVersion = 1;
+	uint32 ForceRebuildVersion = 2;
 	uint32 SettingsHash = Settings.get_hash();
 
 	Ar	<< ForceRebuildVersion << SettingsHash;
@@ -196,7 +143,10 @@ void UAnimBoneCompressionCodec_ACLDatabase::PopulateDDCKey(FArchive& Ar)
 TUniquePtr<ICompressedAnimData> UAnimBoneCompressionCodec_ACLDatabase::AllocateAnimData() const
 {
 	TUniquePtr<FACLDatabaseCompressedAnimData> AnimData = MakeUnique<FACLDatabaseCompressedAnimData>();
+
+#if WITH_EDITORONLY_DATA
 	AnimData->Codec = const_cast<UAnimBoneCompressionCodec_ACLDatabase*>(this);
+#endif
 
 	return AnimData;
 }
@@ -223,63 +173,36 @@ void UAnimBoneCompressionCodec_ACLDatabase::ByteSwapOut(ICompressedAnimData& Ani
 	MemoryStream.Serialize(ACLAnimData.CompressedByteStream.GetData(), ACLAnimData.CompressedByteStream.Num());
 }
 
-class NullDatabaseStreamer final : public acl::idatabase_streamer
-{
-public:
-	NullDatabaseStreamer(const uint8_t* bulk_data, uint32_t bulk_data_size)
-		: m_bulk_data(bulk_data)
-		, m_bulk_data_size(bulk_data_size)
-	{
-	}
-
-	virtual bool is_initialized() const override {return m_bulk_data != nullptr; }
-
-	virtual const uint8_t* get_bulk_data() const override { return m_bulk_data; }
-
-	virtual void stream_in(uint32_t offset, uint32_t size, const std::function<void(bool success)>& continuation) override
-	{
-		continuation(true);
-	}
-
-	virtual void stream_out(uint32_t offset, uint32_t size, const std::function<void(bool success)>& continuation) override
-	{
-		continuation(true);
-	}
-
-private:
-	NullDatabaseStreamer(const NullDatabaseStreamer&) = delete;
-	NullDatabaseStreamer& operator=(const NullDatabaseStreamer&) = delete;
-
-	const uint8_t* m_bulk_data;
-	uint32_t m_bulk_data_size;
-};
-
 void UAnimBoneCompressionCodec_ACLDatabase::DecompressPose(FAnimSequenceDecompressionContext& DecompContext, const BoneTrackArray& RotationPairs, const BoneTrackArray& TranslationPairs, const BoneTrackArray& ScalePairs, TArrayView<FTransform>& OutAtoms) const
 {
-	ACLAllocator AllocatorImpl;
-
 	const FACLDatabaseCompressedAnimData& AnimData = static_cast<const FACLDatabaseCompressedAnimData&>(DecompContext.CompressedAnimData);
 	const acl::compressed_tracks* CompressedClipData = AnimData.GetCompressedTracks();
 	check(CompressedClipData != nullptr && CompressedClipData->is_valid(false).empty());
 
 	acl::decompression_context<UE4DefaultDecompressionSettings, UE4DefaultDatabaseSettings> ACLContext;
-	acl::database_context<UE4DefaultDatabaseSettings> DatabaseContext;
 
 #if WITH_EDITORONLY_DATA
 	const acl::compressed_database* CompressedDatabase = AnimData.GetCompressedDatabase();
 
 	NullDatabaseStreamer Streamer(CompressedDatabase->get_bulk_data(), CompressedDatabase->get_bulk_data_size());
 
-	DatabaseContext.initialize(AllocatorImpl, *CompressedDatabase, Streamer);
-	ACLContext.initialize(*CompressedClipData, DatabaseContext);
+	acl::database_context<UE4DefaultDatabaseSettings> SequenceDatabaseContext;
+	SequenceDatabaseContext.initialize(ACLAllocatorImpl, *CompressedDatabase, Streamer);
+
+	ACLContext.initialize(*CompressedClipData, SequenceDatabaseContext);
 
 	if (PreviewTier == -1 || PreviewTier >= 1)
 	{
 		// If we don't have a preview value or if we preview everything, stream everything in
-		DatabaseContext.stream_in();
+		SequenceDatabaseContext.stream_in();
 	}
 #else
-	ACLContext.initialize(*CompressedClipData);
+	if (DatabaseAsset == nullptr || !ACLContext.initialize(*CompressedClipData, DatabaseAsset->DatabaseContext))
+	{
+		UE_LOG(LogAnimationCompression, Warning, TEXT("ACL failed initialize decompression context, database won't be used"));
+
+		ACLContext.initialize(*CompressedClipData);
+	}
 #endif
 
 	::DecompressPose(DecompContext, ACLContext, RotationPairs, TranslationPairs, ScalePairs, OutAtoms);
@@ -287,30 +210,34 @@ void UAnimBoneCompressionCodec_ACLDatabase::DecompressPose(FAnimSequenceDecompre
 
 void UAnimBoneCompressionCodec_ACLDatabase::DecompressBone(FAnimSequenceDecompressionContext& DecompContext, int32 TrackIndex, FTransform& OutAtom) const
 {
-	ACLAllocator AllocatorImpl;
-
 	const FACLDatabaseCompressedAnimData& AnimData = static_cast<const FACLDatabaseCompressedAnimData&>(DecompContext.CompressedAnimData);
 	const acl::compressed_tracks* CompressedClipData = AnimData.GetCompressedTracks();
 	check(CompressedClipData != nullptr && CompressedClipData->is_valid(false).empty());
 
 	acl::decompression_context<UE4DefaultDecompressionSettings, UE4DefaultDatabaseSettings> ACLContext;
-	acl::database_context<UE4DefaultDatabaseSettings> DatabaseContext;
 
 #if WITH_EDITORONLY_DATA
 	const acl::compressed_database* CompressedDatabase = AnimData.GetCompressedDatabase();
 
 	NullDatabaseStreamer Streamer(CompressedDatabase->get_bulk_data(), CompressedDatabase->get_bulk_data_size());
 
-	DatabaseContext.initialize(AllocatorImpl, *CompressedDatabase, Streamer);
-	ACLContext.initialize(*CompressedClipData, DatabaseContext);
+	acl::database_context<UE4DefaultDatabaseSettings> SequenceDatabaseContext;
+	SequenceDatabaseContext.initialize(ACLAllocatorImpl, *CompressedDatabase, Streamer);
+
+	ACLContext.initialize(*CompressedClipData, SequenceDatabaseContext);
 
 	if (PreviewTier == -1 || PreviewTier >= 1)
 	{
 		// If we don't have a preview value or if we preview everything, stream everything in
-		DatabaseContext.stream_in();
+		SequenceDatabaseContext.stream_in();
 	}
 #else
-	ACLContext.initialize(*CompressedClipData);
+	if (DatabaseAsset == nullptr || !ACLContext.initialize(*CompressedClipData, DatabaseAsset->DatabaseContext))
+	{
+		UE_LOG(LogAnimationCompression, Warning, TEXT("ACL failed initialize decompression context, database won't be used"));
+
+		ACLContext.initialize(*CompressedClipData);
+	}
 #endif
 
 	::DecompressBone(DecompContext, ACLContext, TrackIndex, OutAtom);

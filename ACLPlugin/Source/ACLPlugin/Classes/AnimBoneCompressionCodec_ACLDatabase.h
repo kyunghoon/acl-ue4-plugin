@@ -2,10 +2,15 @@
 
 // Copyright 2020 Nicholas Frechette. All Rights Reserved.
 
+#include <acl/database/database.h>
+#include <acl/database/idatabase_streamer.h>
+
 #include "CoreMinimal.h"
 #include "UObject/ObjectMacros.h"
 #include "AnimBoneCompressionCodec_ACLBase.h"
 #include "AnimBoneCompressionCodec_ACLDatabase.generated.h"
+
+using UE4DefaultDatabaseSettings = acl::default_database_settings;
 
 struct FACLDatabaseCompressedAnimData final : public ICompressedAnimData
 {
@@ -39,6 +44,10 @@ class UAnimBoneCompressionCodec_ACLDatabase : public UAnimBoneCompressionCodec_A
 {
 	GENERATED_UCLASS_BODY()
 
+	/** The database asset that will hold the compressed animation data. */
+	UPROPERTY(EditAnywhere, Category = "ACL Options")
+	class UAnimationCompressionLibraryDatabase* DatabaseAsset;
+
 #if WITH_EDITORONLY_DATA
 	/** The skeletal meshes used to estimate the skinning deformation during compression. */
 	UPROPERTY(EditAnywhere, Category = "ACL Options")
@@ -48,14 +57,7 @@ class UAnimBoneCompressionCodec_ACLDatabase : public UAnimBoneCompressionCodec_A
 	UPROPERTY(EditAnywhere, Category = "ACL Debug Options", meta = (ClampMin = "-1", ClampMax = "2"))
 	int32 PreviewTier;	// TODO: Make this transient, we don't need to serialize this, make it an enum too
 
-	/** A map of individual databases for each sequence compressed with this codec instance. */
-	TMap<FName, acl::compressed_database*> SequenceToDatabaseMap;
-
 	//////////////////////////////////////////////////////////////////////////
-	// UObject implementation
-	virtual void BeginDestroy() override;
-	virtual void Serialize(FArchive& Ar) override;
-
 	// UAnimBoneCompressionCodec implementation
 	virtual void PopulateDDCKey(FArchive& Ar) override;
 

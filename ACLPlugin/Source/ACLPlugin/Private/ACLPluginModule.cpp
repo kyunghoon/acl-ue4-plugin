@@ -19,6 +19,8 @@
 #include "UObject/UObjectIterator.h"
 #endif
 
+ACLAllocator ACLAllocatorImpl;
+
 class FACLPlugin final : public IACLPlugin
 {
 private:
@@ -266,6 +268,7 @@ void FACLPlugin::ListAnimSequences(const TArray<FString>& Args)
 
 void FACLPlugin::DatabaseStreamIn(const TArray<FString>& Args)
 {
+#if WITH_EDITORONLY_DATA
 	const TArray<UAnimBoneCompressionCodec_ACLDatabase*> DatabaseCodecs = GetObjectInstancesSorted<UAnimBoneCompressionCodec_ACLDatabase>();
 	for (UAnimBoneCompressionCodec_ACLDatabase* DatabaseCodec : DatabaseCodecs)
 	{
@@ -280,10 +283,12 @@ void FACLPlugin::DatabaseStreamIn(const TArray<FString>& Args)
 			DatabaseCodec->PreviewTier = 1;
 		}
 	}
+#endif
 }
 
 void FACLPlugin::DatabaseStreamOut(const TArray<FString>& Args)
 {
+#if WITH_EDITORONLY_DATA
 	const TArray<UAnimBoneCompressionCodec_ACLDatabase*> DatabaseCodecs = GetObjectInstancesSorted<UAnimBoneCompressionCodec_ACLDatabase>();
 	for (UAnimBoneCompressionCodec_ACLDatabase* DatabaseCodec : DatabaseCodecs)
 	{
@@ -298,6 +303,7 @@ void FACLPlugin::DatabaseStreamOut(const TArray<FString>& Args)
 			continue;
 		}
 	}
+#endif
 }
 #endif
 

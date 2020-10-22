@@ -170,13 +170,11 @@ static void PopulateShellDistanceFromOptimizationTargets(const FCompressibleAnim
 
 bool UAnimBoneCompressionCodec_ACLBase::Compress(const FCompressibleAnimData& CompressibleAnimData, FCompressibleAnimDataResult& OutResult)
 {
-	ACLAllocator AllocatorImpl;
-
-	acl::track_array_qvvf ACLTracks = BuildACLTransformTrackArray(AllocatorImpl, CompressibleAnimData, DefaultVirtualVertexDistance, SafeVirtualVertexDistance, false);
+	acl::track_array_qvvf ACLTracks = BuildACLTransformTrackArray(ACLAllocatorImpl, CompressibleAnimData, DefaultVirtualVertexDistance, SafeVirtualVertexDistance, false);
 
 	acl::track_array_qvvf ACLBaseTracks;
 	if (CompressibleAnimData.bIsValidAdditive)
-		ACLBaseTracks = BuildACLTransformTrackArray(AllocatorImpl, CompressibleAnimData, DefaultVirtualVertexDistance, SafeVirtualVertexDistance, true);
+		ACLBaseTracks = BuildACLTransformTrackArray(ACLAllocatorImpl, CompressibleAnimData, DefaultVirtualVertexDistance, SafeVirtualVertexDistance, true);
 
 	UE_LOG(LogAnimationCompression, Verbose, TEXT("ACL Animation raw size: %u bytes"), ACLTracks.get_raw_size());
 
@@ -222,26 +220,26 @@ bool UAnimBoneCompressionCodec_ACLBase::Compress(const FCompressibleAnimData& Co
 	acl::error_result CompressionResult;
 	if (bUseStreamingDatabase)
 	{
-		CompressionResult = acl::compress_track_list(AllocatorImpl, ACLTracks, Settings, ACLBaseTracks, AdditiveFormat, CompressedTracks, CompressedDatabase, Stats);
+		CompressionResult = acl::compress_track_list(ACLAllocatorImpl, ACLTracks, Settings, ACLBaseTracks, AdditiveFormat, CompressedTracks, CompressedDatabase, Stats);
 	}
 	else
 	{
-		CompressionResult = acl::compress_track_list(AllocatorImpl, ACLTracks, Settings, ACLBaseTracks, AdditiveFormat, CompressedTracks, Stats);
+		CompressionResult = acl::compress_track_list(ACLAllocatorImpl, ACLTracks, Settings, ACLBaseTracks, AdditiveFormat, CompressedTracks, Stats);
 	}
 
 	// Make sure if we managed to compress, that the error is acceptable and if it isn't, re-compress again with safer settings
 	// This should be VERY rare with the default threshold
 	if (CompressionResult.empty())
 	{
-		const ACLSafetyFallbackResult FallbackResult = ExecuteSafetyFallback(AllocatorImpl, Settings, ACLTracks, ACLBaseTracks, *CompressedTracks, CompressedDatabase, CompressibleAnimData, OutResult);
+		const ACLSafetyFallbackResult FallbackResult = ExecuteSafetyFallback(ACLAllocatorImpl, Settings, ACLTracks, ACLBaseTracks, *CompressedTracks, CompressedDatabase, CompressibleAnimData, OutResult);
 		if (FallbackResult != ACLSafetyFallbackResult::Ignored)
 		{
-			AllocatorImpl.deallocate(CompressedTracks, CompressedTracks->get_size());
+			ACLAllocatorImpl.deallocate(CompressedTracks, CompressedTracks->get_size());
 			CompressedTracks = nullptr;
 
 			if (CompressedDatabase != nullptr)
 			{
-				AllocatorImpl.deallocate(CompressedDatabase, CompressedDatabase->get_size());
+				ACLAllocatorImpl.deallocate(CompressedDatabase, CompressedDatabase->get_size());
 				CompressedDatabase = nullptr;
 			}
 
@@ -276,7 +274,7 @@ bool UAnimBoneCompressionCodec_ACLBase::Compress(const FCompressibleAnimData& Co
 		acl::database_context<acl::debug_database_settings> DatabaseContext;
 		if (CompressedDatabase != nullptr)
 		{
-			DatabaseContext.initialize(AllocatorImpl, *CompressedDatabase);
+			DatabaseContext.initialize(ACLAllocatorImpl, *CompressedDatabase);
 			Context.initialize(*CompressedTracks, DatabaseContext);
 		}
 		else
@@ -284,7 +282,7 @@ bool UAnimBoneCompressionCodec_ACLBase::Compress(const FCompressibleAnimData& Co
 			Context.initialize(*CompressedTracks);
 		}
 
-		const acl::track_error TrackError = acl::calculate_compression_error(AllocatorImpl, ACLTracks, Context, *Settings.error_metric, ACLBaseTracks);
+		const acl::track_error TrackError = acl::calculate_compression_error(ACLAllocatorImpl, ACLTracks, Context, *Settings.error_metric, ACLBaseTracks);
 
 		UE_LOG(LogAnimationCompression, Verbose, TEXT("ACL Animation compressed size: %u bytes"), CompressedClipDataSize);
 		if (CompressedDatabase != nullptr)
@@ -296,14 +294,14 @@ bool UAnimBoneCompressionCodec_ACLBase::Compress(const FCompressibleAnimData& Co
 	}
 #endif
 
-	AllocatorImpl.deallocate(CompressedTracks, CompressedClipDataSize);
+	ACLAllocatorImpl.deallocate(CompressedTracks, CompressedClipDataSize);
 
 	if (CompressedDatabase != nullptr)
 	{
 		RegisterDatabase(CompressibleAnimData, CompressedDatabase, OutResult);
 
 		// No longer need this instance, free it
-		AllocatorImpl.deallocate(CompressedDatabase, CompressedDatabaseSize);
+		ACLAllocatorImpl.deallocate(CompressedDatabase, CompressedDatabaseSize);
 	}
 
 	return true;

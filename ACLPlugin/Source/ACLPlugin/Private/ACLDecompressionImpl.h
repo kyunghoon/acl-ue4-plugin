@@ -140,8 +140,6 @@ struct UE4OutputTrackWriter final : public acl::track_writer
 using UE4DefaultDecompressionSettings = acl::default_transform_decompression_settings;
 using UE4CustomDecompressionSettings = acl::debug_transform_decompression_settings;
 
-using UE4DefaultDatabaseSettings = acl::default_database_settings;
-
 struct UE4SafeDecompressionSettings final : public UE4DefaultDecompressionSettings
 {
 	static constexpr bool is_rotation_format_supported(acl::rotation_format8 format) { return format == acl::rotation_format8::quatf_full; }

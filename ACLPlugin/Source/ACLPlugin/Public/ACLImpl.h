@@ -21,6 +21,7 @@
 
 #include <acl/core/error.h>
 #include <acl/core/iallocator.h>
+#include <acl/database/idatabase_streamer.h>	// TODO: Remove me once the stuff below is moved out
 
 #include <rtm/quatf.h>
 #include <rtm/vector4f.h>
@@ -40,6 +41,40 @@ public:
 		GMalloc->Free(ptr);
 	}
 };
+
+// TODO: Create this within ACL, it'll be handy
+class NullDatabaseStreamer final : public acl::idatabase_streamer
+{
+public:
+	NullDatabaseStreamer(const uint8_t* bulk_data, uint32_t bulk_data_size)
+		: m_bulk_data(bulk_data)
+		, m_bulk_data_size(bulk_data_size)
+	{
+	}
+
+	virtual bool is_initialized() const override {return m_bulk_data != nullptr; }
+
+	virtual const uint8_t* get_bulk_data() const override { return m_bulk_data; }
+
+	virtual void stream_in(uint32_t offset, uint32_t size, const std::function<void(bool success)>& continuation) override
+	{
+		continuation(true);
+	}
+
+	virtual void stream_out(uint32_t offset, uint32_t size, const std::function<void(bool success)>& continuation) override
+	{
+		continuation(true);
+	}
+
+private:
+	NullDatabaseStreamer(const NullDatabaseStreamer&) = delete;
+	NullDatabaseStreamer& operator=(const NullDatabaseStreamer&) = delete;
+
+	const uint8_t* m_bulk_data;
+	uint32_t m_bulk_data_size;
+};
+
+extern ACLAllocator ACLAllocatorImpl;
 
 inline rtm::vector4f RTM_SIMD_CALL VectorCast(const FVector& Input) { return rtm::vector_set(Input.X, Input.Y, Input.Z); }
 inline FVector RTM_SIMD_CALL VectorCast(rtm::vector4f_arg0 Input) { return FVector(rtm::vector_get_x(Input), rtm::vector_get_y(Input), rtm::vector_get_z(Input)); }

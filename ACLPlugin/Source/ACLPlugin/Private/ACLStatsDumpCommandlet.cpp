@@ -264,14 +264,13 @@ static void CalculateClipError(const acl::track_array_qvvf& Tracks, const UAnimS
 	UAnimBoneCompressionCodec_ACLBase* ACLCodec = Cast<UAnimBoneCompressionCodec_ACLBase>(UE4Clip->CompressedData.BoneCompressionCodec);
 	if (ACLCodec != nullptr)
 	{
-		ACLAllocator AllocatorImpl;
 		const acl::compressed_tracks* CompressedClipData = acl::make_compressed_tracks(UE4Clip->CompressedData.CompressedByteStream.GetData());
 
 		const acl::qvvf_transform_error_metric ErrorMetric;
 
 		acl::decompression_context<acl::debug_transform_decompression_settings> Context;
 		Context.initialize(*CompressedClipData);
-		const acl::track_error TrackError = acl::calculate_compression_error(AllocatorImpl, Tracks, Context, ErrorMetric);
+		const acl::track_error TrackError = acl::calculate_compression_error(ACLAllocatorImpl, Tracks, Context, ErrorMetric);
 
 		OutWorstBone = TrackError.index;
 		OutMaxError = TrackError.error;
@@ -423,10 +422,8 @@ static void DumpClipDetailedError(const acl::track_array_qvvf& Tracks, UAnimSequ
 	UAnimBoneCompressionCodec_ACLBase* ACLCodec = Cast<UAnimBoneCompressionCodec_ACLBase>(UE4Clip->CompressedData.BoneCompressionCodec);
 	if (ACLCodec != nullptr)
 	{
-		ACLAllocator Allocator;
-
 		uint32 NumOutputBones = 0;
-		uint32* OutputBoneMapping = acl::acl_impl::create_output_track_mapping(Allocator, Tracks, NumOutputBones);
+		uint32* OutputBoneMapping = acl::acl_impl::create_output_track_mapping(ACLAllocatorImpl, Tracks, NumOutputBones);
 
 		TArray<rtm::qvvf> LossyRemappedLocalPoseTransforms;
 		LossyRemappedLocalPoseTransforms.AddUninitialized(NumBones);
@@ -497,7 +494,7 @@ static void DumpClipDetailedError(const acl::track_array_qvvf& Tracks, UAnimSequ
 			}
 		};
 
-		acl::deallocate_type_array(Allocator, OutputBoneMapping, NumOutputBones);
+		acl::deallocate_type_array(ACLAllocatorImpl, OutputBoneMapping, NumOutputBones);
 		return;
 	}
 
@@ -1019,7 +1016,6 @@ struct CompressAnimationsFunctor
 
 		UACLStatsDumpCommandlet* StatsCommandlet = Cast<UACLStatsDumpCommandlet>(Commandlet);
 		FFileManagerGeneric FileManager;
-		ACLAllocator Allocator;
 
 		for (int32 SequenceIndex = 0; SequenceIndex < NumAnimSequences; ++SequenceIndex)
 		{
@@ -1065,7 +1061,7 @@ struct CompressAnimationsFunctor
 
 			FCompressibleAnimData CompressibleData(UE4Clip, false);
 
-			acl::track_array_qvvf ACLTracks = BuildACLTransformTrackArray(Allocator, CompressibleData, StatsCommandlet->ACLCodec->DefaultVirtualVertexDistance, StatsCommandlet->ACLCodec->SafeVirtualVertexDistance, false);
+			acl::track_array_qvvf ACLTracks = BuildACLTransformTrackArray(ACLAllocatorImpl, CompressibleData, StatsCommandlet->ACLCodec->DefaultVirtualVertexDistance, StatsCommandlet->ACLCodec->SafeVirtualVertexDistance, false);
 
 			// TODO: Add support for additive clips
 			//acl::track_array_qvvf ACLBaseTracks;
@@ -1253,8 +1249,6 @@ int32 UACLStatsDumpCommandlet::Main(const FString& Params)
 
 		UPackage* TempPackage = CreatePackage(nullptr, TEXT("/Temp/ACL"));
 
-		ACLAllocator Allocator;
-
 		TArray<FString> Files;
 		FileManager.FindFiles(Files, *ACLRawDir, TEXT(".acl.sjson"));
 
@@ -1283,7 +1277,7 @@ int32 UACLStatsDumpCommandlet::Main(const FString& Params)
 
 			acl::track_array_qvvf ACLTracks;
 
-			const TCHAR* ErrorMsg = ReadACLClip(FileManager, ACLClipPath, Allocator, ACLTracks);
+			const TCHAR* ErrorMsg = ReadACLClip(FileManager, ACLClipPath, ACLAllocatorImpl, ACLTracks);
 			if (ErrorMsg == nullptr)
 			{
 				USkeleton* UE4Skeleton = NewObject<USkeleton>(TempPackage, USkeleton::StaticClass());
