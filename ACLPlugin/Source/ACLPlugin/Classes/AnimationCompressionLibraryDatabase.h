@@ -17,9 +17,17 @@ class UAnimationCompressionLibraryDatabase : public UObject
 {
 	GENERATED_UCLASS_BODY()
 
-	/** The raw binary data for our compressed database. Present only in cooked builds. */
+	/** The raw binary data for our compressed database and anim sequences. Present only in cooked builds. */
 	UPROPERTY()
-	TArray<uint8> CompressedDatabaseBytes;
+	TArray<uint8> CompressedBytes;
+
+	/** Stores a mapping for each anim sequence, where its compresssed data lives in our compressed buffer. Present only in cooked builds. */
+	UPROPERTY()
+	TArray<uint32> CookedAnimSequenceNames;
+
+	/** Stores a mapping for each anim sequence, where its compresssed data lives in our compressed buffer. Present only in cooked builds. */
+	UPROPERTY()
+	TArray<uint32> CookedAnimSequenceOffsets;
 
 	/** The database decompression context object. Bound to the compressed database instance. */
 	acl::database_context<UE4DefaultDatabaseSettings> DatabaseContext;

@@ -266,7 +266,6 @@ bool UAnimBoneCompressionCodec_ACLBase::Compress(const FCompressibleAnimData& Co
 
 	OutResult.AnimData = AllocateAnimData();
 	OutResult.AnimData->CompressedNumberOfFrames = CompressibleAnimData.NumFrames;
-	OutResult.AnimData->Bind(OutResult.CompressedByteStream);
 
 #if !NO_LOGGING
 	{
@@ -298,11 +297,14 @@ bool UAnimBoneCompressionCodec_ACLBase::Compress(const FCompressibleAnimData& Co
 
 	if (CompressedDatabase != nullptr)
 	{
-		RegisterDatabase(CompressibleAnimData, CompressedDatabase, OutResult);
+		RegisterWithDatabase(CompressibleAnimData, CompressedDatabase, OutResult);
 
 		// No longer need this instance, free it
 		ACLAllocatorImpl.deallocate(CompressedDatabase, CompressedDatabaseSize);
 	}
+
+	// Bind our compressed sequence data buffer
+	OutResult.AnimData->Bind(OutResult.CompressedByteStream);
 
 	return true;
 }

@@ -7,34 +7,43 @@
 
 #include "CoreMinimal.h"
 #include "UObject/ObjectMacros.h"
+#include "AnimationCompressionLibraryDatabase.h"
 #include "AnimBoneCompressionCodec_ACLBase.h"
 #include "AnimBoneCompressionCodec_ACLDatabase.generated.h"
 
-using UE4DefaultDatabaseSettings = acl::default_database_settings;
-
 struct FACLDatabaseCompressedAnimData final : public ICompressedAnimData
 {
-	/** Holds the compressed_tracks instance */
+	/** Maps the compressed_tracks instance. Used in cooked build only. */
 	TArrayView<uint8> CompressedByteStream;
 
-#if WITH_EDITORONLY_DATA
-	/** Holds the compressed_database instance */
-	TArray<uint8> CompressedDatabase;
+	/** Maps the database context instance. Used in cooked build only. */
+	acl::database_context<UE4DefaultDatabaseSettings>* DatabaseContext = nullptr;
 
-	/** The codec instance that owns us */
-	class UAnimBoneCompressionCodec_ACLDatabase* Codec = nullptr;
+	/** The codec instance that owns us. */
+	class UAnimBoneCompressionCodec_ACLDatabase* Codec = nullptr;			// TODO: MAKE THIS CONST
+
+	/** The sequence name hash that owns this data. */
+	uint32 SequenceNameHash = 0;
+
+#if WITH_EDITORONLY_DATA
+	/** Holds the compressed_tracks instance for the anim sequence */
+	TArray<uint8> CompressedClip;
+
+	/** Holds the compressed_database instance for the anim sequence */
+	TArray<uint8> CompressedDatabase;
 #endif
 
-	const acl::compressed_tracks* GetCompressedTracks() const { return acl::make_compressed_tracks(CompressedByteStream.GetData()); }
-
 #if WITH_EDITORONLY_DATA
+	const acl::compressed_tracks* GetCompressedTracks() const { return acl::make_compressed_tracks(CompressedClip.GetData()); }
 	const acl::compressed_database* GetCompressedDatabase() const { return acl::make_compressed_database(CompressedDatabase.GetData()); }
+#else
+	const acl::compressed_tracks* GetCompressedTracks() const { return acl::make_compressed_tracks(CompressedByteStream.GetData()); }
 #endif
 
 	// ICompressedAnimData implementation
-	virtual void SerializeCompressedData(FArchive& Ar);
-	virtual void Bind(const TArrayView<uint8> BulkData) override { CompressedByteStream = BulkData; }
-	virtual int64 GetApproxCompressedSize() const override { return CompressedByteStream.Num(); }
+	virtual void SerializeCompressedData(FArchive& Ar) override;
+	virtual void Bind(const TArrayView<uint8> BulkData) override;
+	virtual int64 GetApproxCompressedSize() const override;
 	virtual bool IsValid() const override;
 };
 
@@ -46,7 +55,7 @@ class UAnimBoneCompressionCodec_ACLDatabase : public UAnimBoneCompressionCodec_A
 
 	/** The database asset that will hold the compressed animation data. */
 	UPROPERTY(EditAnywhere, Category = "ACL Options")
-	class UAnimationCompressionLibraryDatabase* DatabaseAsset;
+	UAnimationCompressionLibraryDatabase* DatabaseAsset;
 
 #if WITH_EDITORONLY_DATA
 	/** The skeletal meshes used to estimate the skinning deformation during compression. */
@@ -63,7 +72,7 @@ class UAnimBoneCompressionCodec_ACLDatabase : public UAnimBoneCompressionCodec_A
 
 	// UAnimBoneCompressionCodec_ACLBase implementation
 	virtual bool UseDatabase() const override { return true; }
-	virtual void RegisterDatabase(const FCompressibleAnimData& CompressibleAnimData, acl::compressed_database* CompressedDatabase, FCompressibleAnimDataResult& OutResult) override;
+	virtual void RegisterWithDatabase(const FCompressibleAnimData& CompressibleAnimData, acl::compressed_database* CompressedDatabase, FCompressibleAnimDataResult& OutResult) override;
 	virtual void GetCompressionSettings(acl::compression_settings& OutSettings) const override;
 	virtual TArray<class USkeletalMesh*> GetOptimizationTargets() const override { return OptimizationTargets; }
 #endif
