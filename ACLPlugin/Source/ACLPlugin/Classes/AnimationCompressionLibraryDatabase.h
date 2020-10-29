@@ -21,13 +21,9 @@ class UAnimationCompressionLibraryDatabase : public UObject
 	UPROPERTY()
 	TArray<uint8> CompressedBytes;
 
-	/** Stores a mapping for each anim sequence, where its compresssed data lives in our compressed buffer. Present only in cooked builds. */
+	/** Stores a mapping for each anim sequence, where its compresssed data lives in our compressed buffer. Each 64 bit value is split into 32 bits: (Hash << 32) | Offset. Present only in cooked builds. */
 	UPROPERTY()
-	TArray<uint32> CookedAnimSequenceNames;
-
-	/** Stores a mapping for each anim sequence, where its compresssed data lives in our compressed buffer. Present only in cooked builds. */
-	UPROPERTY()
-	TArray<uint32> CookedAnimSequenceOffsets;
+	TArray<uint64> CookedAnimSequenceMappings;
 
 	/** The database decompression context object. Bound to the compressed database instance. */
 	acl::database_context<UE4DefaultDatabaseSettings> DatabaseContext;

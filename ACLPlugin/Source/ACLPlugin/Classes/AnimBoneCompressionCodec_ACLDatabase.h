@@ -67,6 +67,9 @@ class UAnimBoneCompressionCodec_ACLDatabase : public UAnimBoneCompressionCodec_A
 	int32 PreviewTier;	// TODO: Make this transient, we don't need to serialize this, make it an enum too
 
 	//////////////////////////////////////////////////////////////////////////
+	// UObject
+	virtual void GetPreloadDependencies(TArray<UObject*>& OutDeps) override;
+
 	// UAnimBoneCompressionCodec implementation
 	virtual void PopulateDDCKey(FArchive& Ar) override;
 

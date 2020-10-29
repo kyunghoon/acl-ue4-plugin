@@ -94,11 +94,6 @@ void FAssetTypeActions_AnimationCompressionLibraryDatabase::ExecuteBuild(TWeakOb
 		}
 	}
 
-	if (AnimSequences.Num() == 0)
-	{
-		return;
-	}
-
 	// Sort our anim sequences by path name to ensure predictable results
 	struct FCompareObjectNames
 	{

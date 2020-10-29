@@ -82,34 +82,54 @@ void UAnimationCompressionLibraryDatabase::PreSave(const ITargetPlatform* Target
 
 		checkSlow(MergedDB->is_valid(true).empty());
 
+#if DO_GUARD_SLOW || 1	// DEBUG ONLY!!!
+		// Sanity check that the database is properly constructed
+		{
+			acl::database_context<UE4DefaultDatabaseSettings> DebugDatabaseContext;
+			const bool ContextInitResult = DebugDatabaseContext.initialize(ACLAllocatorImpl, *MergedDB);
+			checkf(ContextInitResult, TEXT("ACL failed to initialize the database context"));
+
+			for (const acl::database_merge_mapping& Mapping : ACLDatabaseMappings)
+			{
+				check(MergedDB->contains(*Mapping.tracks));
+				check(DebugDatabaseContext.contains(*Mapping.tracks));
+			}
+		}
+#endif
+
 		const uint32 CompressedDatabaseSize = MergedDB->get_size();
 
 		// Our compressed sequences follow the database in memory, aligned to 16 bytes
 		uint32 CompressedSequenceOffset = acl::align_to(CompressedDatabaseSize, 16);
 
 		// Write our our cooked offset mappings
-		// We use two arrays for simplicity. UE4 doesn't support serializing a TMap or TSortedMap and so instead
-		// we store an array of sorted FNames hashes, and another array of offsets. We'll use binary search to find our
+		// We use an array for simplicity. UE4 doesn't support serializing a TMap or TSortedMap and so instead
+		// we store an array of sorted FNames hashes and offsets. We'll use binary search to find our
 		// index at runtime in O(logN) in the sorted names array, and read the offset we need in the other.
-		// TODO: Use uint64 for both merged in together
+		// TODO: Use perfect hashing to bring it to O(1)
+
 		const int32 NumMappings = ACLDatabaseMappings.Num();
-		CookedAnimSequenceNames.Empty(NumMappings);
-		CookedAnimSequenceOffsets.Empty(NumMappings);
+		CookedAnimSequenceMappings.Empty(NumMappings);
 		for (int32 MappingIndex = 0; MappingIndex < NumMappings; ++MappingIndex)
 		{
 			UAnimSequence* AnimSeq = CookedSequences[MappingIndex];
 			const acl::database_merge_mapping& Mapping = ACLDatabaseMappings[MappingIndex];
+			FACLDatabaseCompressedAnimData& AnimData = static_cast<FACLDatabaseCompressedAnimData&>(*AnimSeq->CompressedData.CompressedDataStructure);
 
 			// Align our sequence to 16 bytes
 			CompressedSequenceOffset = acl::align_to(CompressedSequenceOffset, 16);
 
 			// Add our mapping
-			CookedAnimSequenceNames.Add(GetTypeHash(AnimSeq->GetFName()));
-			CookedAnimSequenceOffsets.Add(CompressedSequenceOffset);
+			CookedAnimSequenceMappings.Add((uint64(AnimData.SequenceNameHash) << 32) | uint64(CompressedSequenceOffset));
+
+			UE_LOG(LogAnimationCompression, Warning, TEXT("ACL save [%s] -> [0x%X] @ [%u]"), *AnimSeq->GetFName().ToString(), AnimData.SequenceNameHash, CompressedSequenceOffset);
 
 			// Increment our offset but don't align since we don't want to add unnecesary padding at the end of the last sequence
 			CompressedSequenceOffset += Mapping.tracks->get_size();
 		}
+
+		// Make sure to sort our array, it'll be sorted by hash first since it lives in the top bits
+		CookedAnimSequenceMappings.Sort();
 
 		// Our full buffer size is our resulting offset
 		const uint32 CompressedBytesSize = CompressedSequenceOffset;
@@ -143,6 +163,12 @@ void UAnimationCompressionLibraryDatabase::PreSave(const ITargetPlatform* Target
 			GMalloc->Free(Mapping.tracks);
 		}
 	}
+	else
+	{
+		// We are saving to disk, clear any temporary cooked data we might have
+		CompressedBytes.Empty(0);
+		CookedAnimSequenceMappings.Empty(0);
+	}
 }
 #endif
 
@@ -153,6 +179,7 @@ void UAnimationCompressionLibraryDatabase::PostLoad()
 	if (CompressedBytes.Num() != 0)
 	{
 		const acl::compressed_database* CompressedDatabase = acl::make_compressed_database(CompressedBytes.GetData());
+		check(CompressedDatabase != nullptr && CompressedDatabase->is_valid(true).empty());	// HACK check hash for now while we debug, remove me!
 
 		DatabaseStreamer = MakeUnique<NullDatabaseStreamer>(CompressedDatabase->get_bulk_data(), CompressedDatabase->get_bulk_data_size());
 
@@ -161,5 +188,9 @@ void UAnimationCompressionLibraryDatabase::PostLoad()
 
 		// Stream everything right away, we live in memory for now
 		DatabaseContext.stream_in();
+
+		UE_LOG(LogAnimationCompression, Warning, TEXT("ACL database loaded!"));
+		for (uint64 MappingValue : CookedAnimSequenceMappings)
+			UE_LOG(LogAnimationCompression, Warning, TEXT("ACL loaded hash [0x%X]"), uint32(MappingValue >> 32));
 	}
 }
