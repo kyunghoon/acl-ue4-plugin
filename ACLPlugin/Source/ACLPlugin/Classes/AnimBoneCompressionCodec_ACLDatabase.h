@@ -62,10 +62,6 @@ class UAnimBoneCompressionCodec_ACLDatabase : public UAnimBoneCompressionCodec_A
 	UPROPERTY(EditAnywhere, Category = "ACL Options")
 	TArray<class USkeletalMesh*> OptimizationTargets;
 
-	/** The database tier to use when decompressing. Must be -1, 0, 1, or 2. */
-	UPROPERTY(EditAnywhere, Category = "ACL Debug Options", meta = (ClampMin = "-1", ClampMax = "2"))
-	int32 PreviewTier;	// TODO: Make this transient, we don't need to serialize this, make it an enum too
-
 	//////////////////////////////////////////////////////////////////////////
 	// UObject
 	virtual void GetPreloadDependencies(TArray<UObject*>& OutDeps) override;

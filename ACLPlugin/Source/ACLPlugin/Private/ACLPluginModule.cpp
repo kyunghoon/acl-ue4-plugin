@@ -8,6 +8,7 @@
 #define WITH_ACL_CONSOLE_COMMANDS (!UE_BUILD_SHIPPING && !UE_BUILD_TEST && !NO_LOGGING)
 
 #if WITH_ACL_CONSOLE_COMMANDS
+#include "AnimationCompressionLibraryDatabase.h"
 #include "AnimBoneCompressionCodec_ACLDatabase.h"
 
 #include "AnimationCompression.h"
@@ -32,8 +33,8 @@ private:
 	// Console commands
 	void ListCodecs(const TArray<FString>& Args);
 	void ListAnimSequences(const TArray<FString>& Args);
-	void DatabaseStreamIn(const TArray<FString>& Args);
-	void DatabaseStreamOut(const TArray<FString>& Args);
+	void StreamDatabaseIn(const TArray<FString>& Args);
+	void StreamDatabaseOut(const TArray<FString>& Args);
 
 	TArray<IConsoleObject*> ConsoleCommands;
 #endif
@@ -113,6 +114,7 @@ void FACLPlugin::ListCodecs(const TArray<FString>& Args)
 	const TArray<UAnimCurveCompressionSettings*> CurveSettings = GetObjectInstancesSorted<UAnimCurveCompressionSettings>();
 	const TArray<UAnimCurveCompressionCodec*> CurveCodecs = GetObjectInstancesSorted<UAnimCurveCompressionCodec>();
 	const TArray<UAnimSequence*> AnimSequences = GetObjectInstancesSorted<UAnimSequence>();
+	const TArray<UAnimationCompressionLibraryDatabase*> Databases = GetObjectInstancesSorted<UAnimationCompressionLibraryDatabase>();
 
 	UE_LOG(LogAnimationCompression, Log, TEXT("===== Bone Compression Setting Assets ====="));
 	for (const UAnimBoneCompressionSettings* Settings : BoneSettings)
@@ -210,6 +212,31 @@ void FACLPlugin::ListCodecs(const TArray<FString>& Args)
 		UE_LOG(LogAnimationCompression, Log, TEXT("    uses %.2f MB / %.2f MB (%.1f %%)"), BytesToMB(UsedSize), BytesToMB(TotalSize), Percentage(UsedSize, TotalSize));
 	}
 
+	UE_LOG(LogAnimationCompression, Log, TEXT("===== Animation Compression Library Database Assets ====="));
+	for (const UAnimationCompressionLibraryDatabase* Database : Databases)
+	{
+		int32 NumReferences = 0;
+		for (const UAnimSequence* AnimSeq : AnimSequences)
+		{
+			UAnimBoneCompressionCodec_ACLDatabase* Codec = Cast<UAnimBoneCompressionCodec_ACLDatabase>(AnimSeq->CompressedData.BoneCompressionCodec);
+			if (Codec != nullptr && Codec->DatabaseAsset == Database)
+			{
+				NumReferences++;
+			}
+		}
+
+		const acl::compressed_database* CompressedDatabase = acl::make_compressed_database(Database->CompressedBytes.GetData());
+
+		const uint32 DatabaseSize = CompressedDatabase != nullptr ? CompressedDatabase->get_total_size() : 0;
+		const uint32 StreamableSize = CompressedDatabase != nullptr ? CompressedDatabase->get_bulk_data_size() : 0;
+		const uint32 SequencesSize = Database->CompressedBytes.Num() - DatabaseSize;
+
+		UE_LOG(LogAnimationCompression, Log, TEXT("%s ..."), *Database->GetPathName());
+		UE_LOG(LogAnimationCompression, Log, TEXT("    used by %d / %d (%.1f %%) anim sequences"), NumReferences, AnimSequences.Num(), Percentage(NumReferences, AnimSequences.Num()));
+		UE_LOG(LogAnimationCompression, Log, TEXT("    sequences use %.2f MB"), BytesToMB(SequencesSize));
+		UE_LOG(LogAnimationCompression, Log, TEXT("    database uses %.2f MB (%.2f MB streamable)"), BytesToMB(DatabaseSize), BytesToMB(StreamableSize));
+	}
+
 	LogAnimationCompression.SetVerbosity(OldVerbosity);
 }
 
@@ -266,44 +293,22 @@ void FACLPlugin::ListAnimSequences(const TArray<FString>& Args)
 	LogAnimationCompression.SetVerbosity(OldVerbosity);
 }
 
-void FACLPlugin::DatabaseStreamIn(const TArray<FString>& Args)
+void FACLPlugin::StreamDatabaseIn(const TArray<FString>& Args)
 {
-#if WITH_EDITORONLY_DATA
-	const TArray<UAnimBoneCompressionCodec_ACLDatabase*> DatabaseCodecs = GetObjectInstancesSorted<UAnimBoneCompressionCodec_ACLDatabase>();
-	for (UAnimBoneCompressionCodec_ACLDatabase* DatabaseCodec : DatabaseCodecs)
+	const TArray<UAnimationCompressionLibraryDatabase*> DatabaseAssets = GetObjectInstancesSorted<UAnimationCompressionLibraryDatabase>();
+	for (UAnimationCompressionLibraryDatabase* DatabaseAsset : DatabaseAssets)
 	{
-		if (DatabaseCodec->PreviewTier == -1 || DatabaseCodec->PreviewTier >= 1)
-		{
-			// Data is already all streamed in
-			continue;
-		}
-		else
-		{
-			// Data is all streamed out, stream it in
-			DatabaseCodec->PreviewTier = 1;
-		}
+		UAnimationCompressionLibraryDatabase::StreamDatabaseIn(DatabaseAsset);
 	}
-#endif
 }
 
-void FACLPlugin::DatabaseStreamOut(const TArray<FString>& Args)
+void FACLPlugin::StreamDatabaseOut(const TArray<FString>& Args)
 {
-#if WITH_EDITORONLY_DATA
-	const TArray<UAnimBoneCompressionCodec_ACLDatabase*> DatabaseCodecs = GetObjectInstancesSorted<UAnimBoneCompressionCodec_ACLDatabase>();
-	for (UAnimBoneCompressionCodec_ACLDatabase* DatabaseCodec : DatabaseCodecs)
+	const TArray<UAnimationCompressionLibraryDatabase*> DatabaseAssets = GetObjectInstancesSorted<UAnimationCompressionLibraryDatabase>();
+	for (UAnimationCompressionLibraryDatabase* DatabaseAsset : DatabaseAssets)
 	{
-		if (DatabaseCodec->PreviewTier == -1 || DatabaseCodec->PreviewTier >= 1)
-		{
-			// Data is already all streamed in, stream it out
-			DatabaseCodec->PreviewTier = 0;
-		}
-		else
-		{
-			// Data is already all streamed out
-			continue;
-		}
+		UAnimationCompressionLibraryDatabase::StreamDatabaseOut(DatabaseAsset);
 	}
-#endif
 }
 #endif
 
@@ -329,14 +334,14 @@ void FACLPlugin::StartupModule()
 		ConsoleCommands.Add(IConsoleManager::Get().RegisterConsoleCommand(
 			TEXT("ACL.DatabaseStreamIn"),
 			TEXT("Trigger streaming in of the next tier of data for each database instance."),
-			FConsoleCommandWithArgsDelegate::CreateRaw(this, &FACLPlugin::DatabaseStreamIn),
+			FConsoleCommandWithArgsDelegate::CreateRaw(this, &FACLPlugin::StreamDatabaseIn),
 			ECVF_Default
 		));
 
 		ConsoleCommands.Add(IConsoleManager::Get().RegisterConsoleCommand(
 			TEXT("ACL.DatabaseStreamOut"),
 			TEXT("Trigger streaming out of the current tier of data for each database instance."),
-			FConsoleCommandWithArgsDelegate::CreateRaw(this, &FACLPlugin::DatabaseStreamOut),
+			FConsoleCommandWithArgsDelegate::CreateRaw(this, &FACLPlugin::StreamDatabaseOut),
 			ECVF_Default
 		));
 	}

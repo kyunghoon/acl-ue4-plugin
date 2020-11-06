@@ -43,14 +43,15 @@ void FACLDatabaseCompressedAnimData::Bind(const TArrayView<uint8> BulkData)
 	if (SequenceIndex != INDEX_NONE)
 	{
 		const uint32 CompressedClipOffset = uint32(Codec->DatabaseAsset->CookedAnimSequenceMappings[SequenceIndex]);	// Truncate top 32 bits
-		CompressedByteStream = TArrayView<uint8>(Codec->DatabaseAsset->CompressedBytes.GetData() + CompressedClipOffset, Codec->DatabaseAsset->CompressedBytes.Num() - CompressedClipOffset);
-		DatabaseContext = &Codec->DatabaseAsset->DatabaseContext;
+		uint8* CompressedBytes = Codec->DatabaseAsset->CompressedBytes.GetData() + CompressedClipOffset;
 
-		// Sanity checks
-		const acl::compressed_tracks* CompressedClipData = GetCompressedTracks();
-		check(CompressedClipData != nullptr && CompressedClipData->is_valid(true).empty());	// HACK testing hash while we debug, remove me
-		check(DatabaseContext->is_initialized());
-		check(CompressedClipData != nullptr && DatabaseContext->contains(*CompressedClipData));
+		const acl::compressed_tracks* CompressedClipData = acl::make_compressed_tracks(CompressedBytes);
+		check(CompressedClipData != nullptr && CompressedClipData->is_valid(false).empty());
+
+		const uint32 CompressedSize = CompressedClipData->get_size();
+
+		CompressedByteStream = TArrayView<uint8>(CompressedBytes, CompressedSize);
+		DatabaseContext = &Codec->DatabaseAsset->DatabaseContext;
 	}
 	else
 	{
@@ -109,9 +110,6 @@ UAnimBoneCompressionCodec_ACLDatabase::UAnimBoneCompressionCodec_ACLDatabase(con
 	: Super(ObjectInitializer)
 	, DatabaseAsset(nullptr)
 {
-#if WITH_EDITORONLY_DATA
-	PreviewTier = -1;
-#endif	// WITH_EDITORONLY_DATA
 }
 
 #if WITH_EDITORONLY_DATA
@@ -150,8 +148,6 @@ void UAnimBoneCompressionCodec_ACLDatabase::RegisterWithDatabase(const FCompress
 
 	// Store the sequence name hash since we need it in cooked builds to find our data
 	AnimData.SequenceNameHash = GetTypeHash(CompressibleAnimData.AnimFName);
-
-	UE_LOG(LogAnimationCompression, Warning, TEXT("ACL register [%s] -> [0x%X]"), *CompressibleAnimData.AnimFName.ToString(), AnimData.SequenceNameHash);
 
 	// Copy the sequence data
 	AnimData.CompressedClip = OutResult.CompressedByteStream;
@@ -229,13 +225,6 @@ void UAnimBoneCompressionCodec_ACLDatabase::ByteSwapOut(ICompressedAnimData& Ani
 	MemoryStream.Serialize(ACLAnimData.CompressedByteStream.GetData(), ACLAnimData.CompressedByteStream.Num());
 }
 
-// TODO:
-//    - hook console command to new database and test
-//    - update console commands to debug memory usage
-//    - implement bulk data streaming
-
-
-
 void UAnimBoneCompressionCodec_ACLDatabase::DecompressPose(FAnimSequenceDecompressionContext& DecompContext, const BoneTrackArray& RotationPairs, const BoneTrackArray& TranslationPairs, const BoneTrackArray& ScalePairs, TArrayView<FTransform>& OutAtoms) const
 {
 	const FACLDatabaseCompressedAnimData& AnimData = static_cast<const FACLDatabaseCompressedAnimData&>(DecompContext.CompressedAnimData);
@@ -255,10 +244,21 @@ void UAnimBoneCompressionCodec_ACLDatabase::DecompressPose(FAnimSequenceDecompre
 
 	ACLContext.initialize(*CompressedClipData, SequenceDatabaseContext);
 
-	if (PreviewTier == -1 || PreviewTier >= 1)
+	const ACLDBPreviewState PreviewState = DatabaseAsset != nullptr ? DatabaseAsset->PreviewState : ACLDBPreviewState::None;
+	switch (PreviewState)
 	{
-		// If we don't have a preview value or if we preview everything, stream everything in
+	default:
+	case ACLDBPreviewState::None:
+		// No preview state means we show the highest quality
 		SequenceDatabaseContext.stream_in();
+		break;
+	case ACLDBPreviewState::HighQuality:
+		// Stream in our high quality data
+		SequenceDatabaseContext.stream_in();
+		break;
+	case ACLDBPreviewState::LowQuality:
+		// Lowest quality means nothing is streamed in
+		break;
 	}
 #else
 	if (AnimData.CompressedByteStream.Num() == 0)
@@ -299,10 +299,21 @@ void UAnimBoneCompressionCodec_ACLDatabase::DecompressBone(FAnimSequenceDecompre
 
 	ACLContext.initialize(*CompressedClipData, SequenceDatabaseContext);
 
-	if (PreviewTier == -1 || PreviewTier >= 1)
+	const ACLDBPreviewState PreviewState = DatabaseAsset != nullptr ? DatabaseAsset->PreviewState : ACLDBPreviewState::None;
+	switch (PreviewState)
 	{
-		// If we don't have a preview value or if we preview everything, stream everything in
+	default:
+	case ACLDBPreviewState::None:
+		// No preview state means we show the highest quality
 		SequenceDatabaseContext.stream_in();
+		break;
+	case ACLDBPreviewState::HighQuality:
+		// Stream in our high quality data
+		SequenceDatabaseContext.stream_in();
+		break;
+	case ACLDBPreviewState::LowQuality:
+		// Lowest quality means nothing is streamed in
+		break;
 	}
 #else
 	if (AnimData.CompressedByteStream.Num() == 0)

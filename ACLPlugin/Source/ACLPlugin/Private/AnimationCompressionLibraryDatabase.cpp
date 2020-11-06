@@ -3,11 +3,16 @@
 #include "AnimationCompressionLibraryDatabase.h"
 #include "AnimBoneCompressionCodec_ACLDatabase.h"
 
+#include "HAL/UnrealMemory.h"
+
 #if WITH_EDITORONLY_DATA
 #include "ACLImpl.h"
 
 #include <acl/compression/compress.h>
 #endif	// WITH_EDITORONLY_DATA
+
+// UE 4.25 doesn't expose its virtual memory management, see FPlatformMemory::FPlatformVirtualMemoryBlock
+#define WITH_VMEM_MANAGEMENT 0
 
 UAnimationCompressionLibraryDatabase::UAnimationCompressionLibraryDatabase(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -18,6 +23,11 @@ UAnimationCompressionLibraryDatabase::UAnimationCompressionLibraryDatabase(const
 void UAnimationCompressionLibraryDatabase::PreSave(const ITargetPlatform* TargetPlatform)
 {
 	Super::PreSave(TargetPlatform);
+
+	// Clear any stale data we might have
+	CompressedBytes.Empty(0);
+	CookedAnimSequenceMappings.Empty(0);
+	StreamableBulkData.RemoveBulkData();
 
 	if (TargetPlatform != nullptr && TargetPlatform->RequiresCookedData())
 	{
@@ -82,7 +92,7 @@ void UAnimationCompressionLibraryDatabase::PreSave(const ITargetPlatform* Target
 
 		checkSlow(MergedDB->is_valid(true).empty());
 
-#if DO_GUARD_SLOW || 1	// DEBUG ONLY!!!
+#if DO_GUARD_SLOW
 		// Sanity check that the database is properly constructed
 		{
 			acl::database_context<UE4DefaultDatabaseSettings> DebugDatabaseContext;
@@ -97,7 +107,29 @@ void UAnimationCompressionLibraryDatabase::PreSave(const ITargetPlatform* Target
 		}
 #endif
 
-		const uint32 CompressedDatabaseSize = MergedDB->get_size();
+		// Split our database to serialize the bulk data separately
+		acl::compressed_database* SplitDB = nullptr;
+		uint8* SplitDBBulkData = nullptr;
+		const acl::error_result SplitResult = acl::split_compressed_database_bulk_data(ACLAllocatorImpl, *MergedDB, SplitDB, SplitDBBulkData);
+
+		// Free the merged instance we no longer need
+		ACLAllocatorImpl.deallocate(MergedDB, MergedDB->get_size());
+
+		if (!SplitResult.empty())
+		{
+			// Free our duplicate compressed clips
+			for (const acl::database_merge_mapping& Mapping : ACLDatabaseMappings)
+			{
+				GMalloc->Free(Mapping.tracks);
+			}
+
+			UE_LOG(LogAnimationCompression, Warning, TEXT("ACL failed to split database: %s"), ANSI_TO_TCHAR(SplitResult.c_str()));
+			return;
+		}
+
+		checkSlow(SplitDB->is_valid(true).empty());
+
+		const uint32 CompressedDatabaseSize = SplitDB->get_size();
 
 		// Our compressed sequences follow the database in memory, aligned to 16 bytes
 		uint32 CompressedSequenceOffset = acl::align_to(CompressedDatabaseSize, 16);
@@ -122,8 +154,6 @@ void UAnimationCompressionLibraryDatabase::PreSave(const ITargetPlatform* Target
 			// Add our mapping
 			CookedAnimSequenceMappings.Add((uint64(AnimData.SequenceNameHash) << 32) | uint64(CompressedSequenceOffset));
 
-			UE_LOG(LogAnimationCompression, Warning, TEXT("ACL save [%s] -> [0x%X] @ [%u]"), *AnimSeq->GetFName().ToString(), AnimData.SequenceNameHash, CompressedSequenceOffset);
-
 			// Increment our offset but don't align since we don't want to add unnecesary padding at the end of the last sequence
 			CompressedSequenceOffset += Mapping.tracks->get_size();
 		}
@@ -137,7 +167,7 @@ void UAnimationCompressionLibraryDatabase::PreSave(const ITargetPlatform* Target
 		// Copy our database
 		CompressedBytes.Empty(CompressedBytesSize);
 		CompressedBytes.AddUninitialized(CompressedBytesSize);
-		FMemory::Memcpy(CompressedBytes.GetData(), MergedDB, CompressedDatabaseSize);
+		FMemory::Memcpy(CompressedBytes.GetData(), SplitDB, CompressedDatabaseSize);
 
 		// Copy our compressed clips
 		CompressedSequenceOffset = acl::align_to(CompressedDatabaseSize, 16);	// Reset
@@ -154,8 +184,19 @@ void UAnimationCompressionLibraryDatabase::PreSave(const ITargetPlatform* Target
 			CompressedSequenceOffset += Mapping.tracks->get_size();
 		}
 
-		// Free the instance we no longer need
-		ACLAllocatorImpl.deallocate(MergedDB, CompressedDatabaseSize);
+		// Copy our bulk data
+		const uint32 BulkDataSize = SplitDB->get_bulk_data_size();
+
+		StreamableBulkData.Lock(LOCK_READ_WRITE);
+		{
+			void* BulkDataToSave = StreamableBulkData.Realloc(BulkDataSize);
+			FMemory::Memcpy(BulkDataToSave, SplitDBBulkData, BulkDataSize);
+		}
+		StreamableBulkData.Unlock();
+
+		// Free the split instance we no longer need
+		ACLAllocatorImpl.deallocate(SplitDB, CompressedDatabaseSize);
+		ACLAllocatorImpl.deallocate(SplitDBBulkData, BulkDataSize);
 
 		// Free our duplicate compressed clips
 		for (const acl::database_merge_mapping& Mapping : ACLDatabaseMappings)
@@ -163,14 +204,143 @@ void UAnimationCompressionLibraryDatabase::PreSave(const ITargetPlatform* Target
 			GMalloc->Free(Mapping.tracks);
 		}
 	}
-	else
-	{
-		// We are saving to disk, clear any temporary cooked data we might have
-		CompressedBytes.Empty(0);
-		CookedAnimSequenceMappings.Empty(0);
-	}
 }
 #endif
+
+/** A simple async UE4 streamer. */
+class UE4DatabaseStreamer final : public acl::idatabase_streamer
+{
+public:
+	UE4DatabaseStreamer(FByteBulkData& StreamableBulkData_, uint32 BulkDataSize)
+		: StreamableBulkData(StreamableBulkData_)
+		, PendingIORequest(nullptr)
+	{
+#if WITH_VMEM_MANAGEMENT
+		// Allocate but don't commit the memory until we need it
+		// TODO: Commit right away if requested
+		StreamedBulkDataBlock = FPlatformMemory::FPlatformVirtualMemoryBlock::AllocateVirtual(BulkDataSize);
+		BulkDataPtr = static_cast<uint8*>(StreamedBulkDataBlock.GetVirtualPointer());
+		bIsBulkDataCommited = false;
+#else
+		BulkDataPtr = new uint8[BulkDataSize];
+#endif
+	}
+
+	~UE4DatabaseStreamer()
+	{
+		// If we have a stream in request, wait for it to complete and clear it
+		WaitForStreamingToComplete();
+
+#if WITH_VMEM_MANAGEMENT
+		StreamedBulkDataBlock.FreeVirtual();
+#else
+		delete[] BulkDataPtr;
+#endif
+	}
+
+	virtual bool is_initialized() const override { return true; }
+
+	virtual const uint8_t* get_bulk_data() const override { return BulkDataPtr; }
+
+	virtual void stream_in(uint32_t Offset, uint32_t Size, const std::function<void(bool success)>& Continuation) override
+	{
+		// If we already did a stream in request, wait for it to complete and clear it
+		WaitForStreamingToComplete();
+
+		FBulkDataIORequestCallBack AsyncFileCallBack = [this, Continuation](bool bWasCancelled, IBulkDataIORequest* Req)
+			{
+				UE_LOG(LogAnimationCompression, Log, TEXT("ACL completed the stream in request!"));
+
+				// Tell ACL whether the streaming request was a success or not, this is thread safe
+				Continuation(!bWasCancelled);
+			};
+
+		UE_LOG(LogAnimationCompression, Log, TEXT("ACL starting a new stream in request!"));
+
+#if WITH_VMEM_MANAGEMENT
+		// Commit our memory
+		if (!bIsBulkDataCommited)
+		{
+			StreamedBulkDataBlock.Commit();
+			bIsBulkDataCommited = true;
+		}
+#endif
+
+		// Fire off our async streaming request
+		PendingIORequest = StreamableBulkData.CreateStreamingRequest(Offset, Size, AIOP_Low, &AsyncFileCallBack, BulkDataPtr);
+		if (PendingIORequest == nullptr)
+		{
+			UE_LOG(LogAnimationCompression, Warning, TEXT("ACL failed to initiate database stream in request!"));
+			Continuation(false);
+		}
+	}
+
+	virtual void stream_out(uint32_t Offset, uint32_t Size, const std::function<void(bool success)>& Continuation) override
+	{
+		// If we already did a stream in request, wait for it to complete and clear it
+		WaitForStreamingToComplete();
+
+		UE_LOG(LogAnimationCompression, Log, TEXT("ACL is streaming out a database!"));
+
+		// Notify ACL that we streamed out the data, this is not thread safe and cannot run while animations are decompressing
+		Continuation(true);
+
+#if WITH_VMEM_MANAGEMENT
+		// Decommit our memory
+		// TODO: Make this optional?
+		if (bIsBulkDataCommited)
+		{
+			StreamedBulkDataBlock.Decommit();
+			bIsBulkDataCommited = false;
+		}
+#endif
+	}
+
+	void WaitForStreamingToComplete()
+	{
+		if (PendingIORequest != nullptr)
+		{
+			verify(PendingIORequest->WaitCompletion());
+			delete PendingIORequest;
+			PendingIORequest = nullptr;
+		}
+	}
+
+private:
+	UE4DatabaseStreamer(const UE4DatabaseStreamer&) = delete;
+	UE4DatabaseStreamer& operator=(const UE4DatabaseStreamer&) = delete;
+
+	FByteBulkData& StreamableBulkData;
+	uint8* BulkDataPtr;
+
+	IBulkDataIORequest* PendingIORequest;
+
+#if WITH_VMEM_MANAGEMENT
+	FPlatformMemory::FPlatformVirtualMemoryBlock StreamedBulkDataBlock;
+	bool bIsBulkDataCommited;
+#endif
+};
+
+void UAnimationCompressionLibraryDatabase::BeginDestroy()
+{
+	Super::BeginDestroy();
+
+	if (DatabaseStreamer)
+	{
+		// Wait for any pending IO requests
+		UE4DatabaseStreamer* Streamer = (UE4DatabaseStreamer*)DatabaseStreamer.Release();
+		Streamer->WaitForStreamingToComplete();
+
+		// Reset our context to make sure it no longer references the streamer
+		DatabaseContext.reset();
+
+		// Free our streamer, it is no longer needed
+		delete Streamer;
+	}
+}
+
+// TODO:
+//       Variable chunk size to test multiple chunks
 
 void UAnimationCompressionLibraryDatabase::PostLoad()
 {
@@ -179,18 +349,135 @@ void UAnimationCompressionLibraryDatabase::PostLoad()
 	if (CompressedBytes.Num() != 0)
 	{
 		const acl::compressed_database* CompressedDatabase = acl::make_compressed_database(CompressedBytes.GetData());
-		check(CompressedDatabase != nullptr && CompressedDatabase->is_valid(true).empty());	// HACK check hash for now while we debug, remove me!
+		check(CompressedDatabase != nullptr && CompressedDatabase->is_valid(false).empty());
 
-		DatabaseStreamer = MakeUnique<NullDatabaseStreamer>(CompressedDatabase->get_bulk_data(), CompressedDatabase->get_bulk_data_size());
+		DatabaseStreamer = MakeUnique<UE4DatabaseStreamer>(StreamableBulkData, CompressedDatabase->get_bulk_data_size());
 
 		const bool ContextInitResult = DatabaseContext.initialize(ACLAllocatorImpl, *CompressedDatabase, *DatabaseStreamer);
 		checkf(ContextInitResult, TEXT("ACL failed to initialize the database context"));
-
-		// Stream everything right away, we live in memory for now
-		DatabaseContext.stream_in();
-
-		UE_LOG(LogAnimationCompression, Warning, TEXT("ACL database loaded!"));
-		for (uint64 MappingValue : CookedAnimSequenceMappings)
-			UE_LOG(LogAnimationCompression, Warning, TEXT("ACL loaded hash [0x%X]"), uint32(MappingValue >> 32));
 	}
+}
+
+void UAnimationCompressionLibraryDatabase::Serialize(FArchive& Ar)
+{
+	Super::Serialize(Ar);
+
+	bool bCooked = Ar.IsCooking();
+	Ar << bCooked;
+
+	if (bCooked)
+	{
+		StreamableBulkData.SetBulkDataFlags(BULKDATA_Force_NOT_InlinePayload);
+		StreamableBulkData.Serialize(Ar, this, INDEX_NONE, false);
+	}
+}
+
+void UAnimationCompressionLibraryDatabase::StreamDatabaseIn(UAnimationCompressionLibraryDatabase* DatabaseAsset)
+{
+	// Must execute on the main thread but can do so at any point, even while animations are updating
+	check(IsInGameThread());
+
+	if (DatabaseAsset->DatabaseContext.is_initialized())
+	{
+		// The database context is used, our data has been cooked
+		const acl::database_stream_request_result Result = DatabaseAsset->DatabaseContext.stream_in();
+		switch (Result)
+		{
+		default:
+			UE_LOG(LogAnimationCompression, Log, TEXT("Unknown ACL database stream request result: %u [%s]"), uint32(Result), *DatabaseAsset->GetPathName());
+			break;
+		case acl::database_stream_request_result::not_initialized:
+			UE_LOG(LogAnimationCompression, Log, TEXT("ACL database context not initialized [%s]"), *DatabaseAsset->GetPathName());
+			break;
+		case acl::database_stream_request_result::streaming:
+			UE_LOG(LogAnimationCompression, Log, TEXT("ACL database streaming is already in progress [%s]"), *DatabaseAsset->GetPathName());
+			break;
+		case acl::database_stream_request_result::dispatched:
+			UE_LOG(LogAnimationCompression, Log, TEXT("ACL database streaming request has been dispatched [%s]"), *DatabaseAsset->GetPathName());
+			break;
+		case acl::database_stream_request_result::done:
+			UE_LOG(LogAnimationCompression, Log, TEXT("ACL database streaming is done [%s]"), *DatabaseAsset->GetPathName());
+			break;
+		}
+	}
+	else
+	{
+#if WITH_EDITORONLY_DATA
+		// Context isn't used, everything is in memory in the editor, just update the preview tier
+		switch (DatabaseAsset->PreviewState)
+		{
+		default:
+		case ACLDBPreviewState::None:
+			// No preview state means we want to see the highest quality
+			DatabaseAsset->PreviewState = ACLDBPreviewState::HighQuality;
+			break;
+		case ACLDBPreviewState::HighQuality:
+			// Already showing the highest quality, nothing to do
+			break;
+		case ACLDBPreviewState::LowQuality:
+			// Stream in the high quality data
+			DatabaseAsset->PreviewState = ACLDBPreviewState::HighQuality;
+			break;
+		}
+#endif
+	}
+}
+
+void UAnimationCompressionLibraryDatabase::StreamDatabaseOut(UAnimationCompressionLibraryDatabase* DatabaseAsset)
+{
+	// Must execute on the main thread but must do so while animations aren't updating
+	check(IsInGameThread());
+
+	TFunction<bool(float)> StreamOutFun = [DatabaseAsset](float DeltaTime)
+		{
+			if (DatabaseAsset->DatabaseContext.is_initialized())
+			{
+				// The database context is used, our data has been cooked
+				const acl::database_stream_request_result Result = DatabaseAsset->DatabaseContext.stream_out();
+				switch (Result)
+				{
+				default:
+					UE_LOG(LogAnimationCompression, Log, TEXT("Unknown ACL database stream request result: %u [%s]"), uint32(Result), *DatabaseAsset->GetPathName());
+					break;
+				case acl::database_stream_request_result::not_initialized:
+					UE_LOG(LogAnimationCompression, Log, TEXT("ACL database context not initialized [%s]"), *DatabaseAsset->GetPathName());
+					break;
+				case acl::database_stream_request_result::streaming:
+					UE_LOG(LogAnimationCompression, Log, TEXT("ACL database streaming is already in progress [%s]"), *DatabaseAsset->GetPathName());
+					break;
+				case acl::database_stream_request_result::dispatched:
+					UE_LOG(LogAnimationCompression, Log, TEXT("ACL database streaming request has been dispatched [%s]"), *DatabaseAsset->GetPathName());
+					break;
+				case acl::database_stream_request_result::done:
+					UE_LOG(LogAnimationCompression, Log, TEXT("ACL database streaming is done [%s]"), *DatabaseAsset->GetPathName());
+					break;
+				}
+			}
+			else
+			{
+	#if WITH_EDITORONLY_DATA
+				// Context isn't used, everything is in memory in the editor, just update the preview tier
+				switch (DatabaseAsset->PreviewState)
+				{
+				default:
+				case ACLDBPreviewState::None:
+					// No preview state means we want to see the lowest quality
+					DatabaseAsset->PreviewState = ACLDBPreviewState::LowQuality;
+					break;
+				case ACLDBPreviewState::HighQuality:
+					// Stream out the high quality data
+					DatabaseAsset->PreviewState = ACLDBPreviewState::LowQuality;
+					break;
+				case ACLDBPreviewState::LowQuality:
+					// Already showing the lowest quality, nothing to do
+					break;
+				}
+	#endif
+			}
+
+			return false;
+		};
+
+	// Run later, once animations are done updating for sure
+	FTicker::GetCoreTicker().AddTicker(TEXT("ACLDBStreamOut"), 0.0F, StreamOutFun);
 }

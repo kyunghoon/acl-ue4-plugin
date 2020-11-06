@@ -11,6 +11,16 @@
 
 using UE4DefaultDatabaseSettings = acl::default_database_settings;
 
+/** An enum to represent the ACL database streaming preview state. */
+UENUM()
+enum class ACLDBPreviewState : uint8
+{
+	None UMETA(DisplayName = "No Preview"),
+	HighQuality UMETA(DisplayName = "High Quality"),
+	//MediumQuality UMETA(DisplayName = "Medium Quality"),
+	LowQuality UMETA(DisplayName = "Low Quality"),
+};
+
 /** An ACL database object references several UAnimSequence instances that it contains. */
 UCLASS(MinimalAPI, config = Engine, meta = (DisplayName = "ACL Database"))
 class UAnimationCompressionLibraryDatabase : public UObject
@@ -25,6 +35,9 @@ class UAnimationCompressionLibraryDatabase : public UObject
 	UPROPERTY()
 	TArray<uint64> CookedAnimSequenceMappings;
 
+	/** Bulk data that we'll stream. Present only in cooked builds. */
+	FByteBulkData StreamableBulkData;
+
 	/** The database decompression context object. Bound to the compressed database instance. */
 	acl::database_context<UE4DefaultDatabaseSettings> DatabaseContext;
 
@@ -32,6 +45,10 @@ class UAnimationCompressionLibraryDatabase : public UObject
 	TUniquePtr<acl::idatabase_streamer> DatabaseStreamer;
 
 #if WITH_EDITORONLY_DATA
+	/** The database streaming state to use when decompressing and preview is enabled. */
+	UPROPERTY(EditAnywhere, Transient, Category = "ACL Debug Options")
+	ACLDBPreviewState PreviewState;
+
 	/** The anim sequences contained within the database. Built manually from the asset UI, content browser, or with a commandlet. */
 	UPROPERTY(VisibleAnywhere, Category = "Metadata")
 	TArray<class UAnimSequence*> AnimSequences;
@@ -42,5 +59,15 @@ class UAnimationCompressionLibraryDatabase : public UObject
 #endif
 
 	// UObject implementation
+	virtual void BeginDestroy() override;
 	virtual void PostLoad() override;
+	virtual void Serialize(FArchive& Ar) override;
+
+	// Initiate a database stream in request
+	UFUNCTION(BlueprintCallable, Category = "Animation|ACL", meta = (DisplayName = "Stream Database In"))
+	static void StreamDatabaseIn(UAnimationCompressionLibraryDatabase* DatabaseAsset);
+
+	// Initiate a database stream out request
+	UFUNCTION(BlueprintCallable, Category = "Animation|ACL", meta = (DisplayName = "Stream Database Out"))
+	static void StreamDatabaseOut(UAnimationCompressionLibraryDatabase* DatabaseAsset);
 };
