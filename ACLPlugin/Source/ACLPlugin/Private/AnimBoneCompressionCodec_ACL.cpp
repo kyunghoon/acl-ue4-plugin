@@ -67,7 +67,7 @@ ACLSafetyFallbackResult UAnimBoneCompressionCodec_ACL::ExecuteSafetyFallback(acl
 	{
 		checkSlow(CompressedClipData.is_valid(true).empty());
 
-		acl::decompression_context<UE4DefaultDecompressionSettings, UE4DefaultDatabaseSettings> Context;
+		acl::decompression_context<UE4DefaultDBDecompressionSettings> Context;
 		acl::database_context<UE4DefaultDatabaseSettings> DatabaseContext;
 		if (CompressedDatabase != nullptr)
 		{

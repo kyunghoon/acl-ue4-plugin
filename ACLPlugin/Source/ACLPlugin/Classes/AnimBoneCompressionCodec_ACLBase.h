@@ -6,6 +6,8 @@
 #include "UObject/ObjectMacros.h"
 #include "Animation/AnimBoneCompressionCodec.h"
 
+#include "ACLImpl.h"
+
 #if WITH_EDITORONLY_DATA
 #include <acl/compression/compression_settings.h>
 #include <acl/compression/track_array.h>

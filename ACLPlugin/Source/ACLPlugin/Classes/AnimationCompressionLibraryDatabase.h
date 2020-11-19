@@ -5,11 +5,11 @@
 #include <acl/database/database.h>
 #include <acl/database/idatabase_streamer.h>
 
+#include "ACLImpl.h"
+
 #include "CoreMinimal.h"
 #include "UObject/ObjectMacros.h"
 #include "AnimationCompressionLibraryDatabase.generated.h"
-
-using UE4DefaultDatabaseSettings = acl::default_database_settings;
 
 /** An enum to represent the ACL database streaming preview state. */
 UENUM()

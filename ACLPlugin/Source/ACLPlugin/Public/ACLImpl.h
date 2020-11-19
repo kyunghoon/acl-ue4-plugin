@@ -22,6 +22,7 @@
 #include <acl/core/error.h>
 #include <acl/core/iallocator.h>
 #include <acl/database/idatabase_streamer.h>	// TODO: Remove me once the stuff below is moved out
+#include <acl/decompression/decompress.h>
 
 #include <rtm/quatf.h>
 #include <rtm/vector4f.h>
@@ -42,40 +43,9 @@ public:
 	}
 };
 
-// TODO: Create this within ACL, it'll be handy
-class NullDatabaseStreamer final : public acl::idatabase_streamer
-{
-public:
-	NullDatabaseStreamer(const uint8_t* bulk_data, uint32_t bulk_data_size)
-		: m_bulk_data(bulk_data)
-		, m_bulk_data_size(bulk_data_size)
-	{
-	}
-
-	virtual bool is_initialized() const override {return m_bulk_data != nullptr; }
-
-	virtual const uint8_t* get_bulk_data() const override { return m_bulk_data; }
-
-	virtual void stream_in(uint32_t offset, uint32_t size, const std::function<void(bool success)>& continuation) override
-	{
-		continuation(true);
-	}
-
-	virtual void stream_out(uint32_t offset, uint32_t size, const std::function<void(bool success)>& continuation) override
-	{
-		continuation(true);
-	}
-
-private:
-	NullDatabaseStreamer(const NullDatabaseStreamer&) = delete;
-	NullDatabaseStreamer& operator=(const NullDatabaseStreamer&) = delete;
-
-	const uint8_t* m_bulk_data;
-	uint32_t m_bulk_data_size;
-};
-
 extern ACLAllocator ACLAllocatorImpl;
 
+/** RTM <-> UE4 conversion utilities */
 inline rtm::vector4f RTM_SIMD_CALL VectorCast(const FVector& Input) { return rtm::vector_set(Input.X, Input.Y, Input.Z); }
 inline FVector RTM_SIMD_CALL VectorCast(rtm::vector4f_arg0 Input) { return FVector(rtm::vector_get_x(Input), rtm::vector_get_y(Input), rtm::vector_get_z(Input)); }
 inline rtm::quatf RTM_SIMD_CALL QuatCast(const FQuat& Input) { return rtm::quat_set(Input.X, Input.Y, Input.Z, Input.W); }
@@ -83,6 +53,31 @@ inline FQuat RTM_SIMD_CALL QuatCast(rtm::quatf_arg0 Input) { return FQuat(rtm::q
 inline rtm::qvvf RTM_SIMD_CALL TransformCast(const FTransform& Input) { return rtm::qvv_set(QuatCast(Input.GetRotation()), VectorCast(Input.GetTranslation()), VectorCast(Input.GetScale3D())); }
 inline FTransform RTM_SIMD_CALL TransformCast(rtm::qvvf_arg0 Input) { return FTransform(QuatCast(Input.rotation), VectorCast(Input.translation), VectorCast(Input.scale)); }
 
+/** The decompression settings used by ACL */
+using UE4DefaultDecompressionSettings = acl::default_transform_decompression_settings;
+using UE4CustomDecompressionSettings = acl::debug_transform_decompression_settings;
+
+struct UE4SafeDecompressionSettings final : public UE4DefaultDecompressionSettings
+{
+	static constexpr bool is_rotation_format_supported(acl::rotation_format8 format) { return format == acl::rotation_format8::quatf_full; }
+	static constexpr acl::rotation_format8 get_rotation_format(acl::rotation_format8 /*format*/) { return acl::rotation_format8::quatf_full; }
+};
+
+using UE4DefaultDatabaseSettings = acl::default_database_settings;
+
+struct UE4DefaultDBDecompressionSettings final : public UE4DefaultDecompressionSettings
+{
+	using database_settings_type = UE4DefaultDatabaseSettings;
+};
+
+using UE4DebugDatabaseSettings = acl::debug_database_settings;
+
+struct UE4DebugDBDecompressionSettings final : public acl::debug_transform_decompression_settings
+{
+	using database_settings_type = UE4DebugDatabaseSettings;
+};
+
+/** Editor only utilities */
 #if WITH_EDITOR
 #include "AnimBoneCompressionCodec_ACLBase.h"
 

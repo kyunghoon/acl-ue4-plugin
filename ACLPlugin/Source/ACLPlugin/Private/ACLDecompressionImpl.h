@@ -3,6 +3,7 @@
 // Copyright 2018 Nicholas Frechette. All Rights Reserved.
 
 #include "CoreMinimal.h"
+
 #include "ACLImpl.h"
 
 #include <acl/database/database.h>
@@ -135,15 +136,6 @@ struct UE4OutputTrackWriter final : public acl::track_writer
 	{
 		Atom->SetScale3DRaw(Scale);
 	}
-};
-
-using UE4DefaultDecompressionSettings = acl::default_transform_decompression_settings;
-using UE4CustomDecompressionSettings = acl::debug_transform_decompression_settings;
-
-struct UE4SafeDecompressionSettings final : public UE4DefaultDecompressionSettings
-{
-	static constexpr bool is_rotation_format_supported(acl::rotation_format8 format) { return format == acl::rotation_format8::quatf_full; }
-	static constexpr acl::rotation_format8 get_rotation_format(acl::rotation_format8 /*format*/) { return acl::rotation_format8::quatf_full; }
 };
 
 template<class ACLContextType>

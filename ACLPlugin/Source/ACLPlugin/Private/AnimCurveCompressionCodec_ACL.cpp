@@ -2,6 +2,8 @@
 
 #include "AnimCurveCompressionCodec_ACL.h"
 
+#include "ACLImpl.h"
+
 #if WITH_EDITORONLY_DATA
 #include "Animation/MorphTarget.h"
 #include "Rendering/SkeletalMeshModel.h"
@@ -10,8 +12,6 @@
 #include <acl/compression/track.h>
 #include <acl/compression/track_array.h>
 #include <acl/compression/track_error.h>
-
-#include "ACLImpl.h"
 #endif	// WITH_EDITOR
 
 #include <acl/decompression/decompress.h>

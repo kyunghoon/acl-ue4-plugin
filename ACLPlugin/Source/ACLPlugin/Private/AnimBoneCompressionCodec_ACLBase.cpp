@@ -269,8 +269,8 @@ bool UAnimBoneCompressionCodec_ACLBase::Compress(const FCompressibleAnimData& Co
 
 #if !NO_LOGGING
 	{
-		acl::decompression_context<acl::debug_transform_decompression_settings, acl::debug_database_settings> Context;
-		acl::database_context<acl::debug_database_settings> DatabaseContext;
+		acl::decompression_context<UE4DebugDBDecompressionSettings> Context;
+		acl::database_context<UE4DebugDatabaseSettings> DatabaseContext;
 		if (CompressedDatabase != nullptr)
 		{
 			DatabaseContext.initialize(ACLAllocatorImpl, *CompressedDatabase);

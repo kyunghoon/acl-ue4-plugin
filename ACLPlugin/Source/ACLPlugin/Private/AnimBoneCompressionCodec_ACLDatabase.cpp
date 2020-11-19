@@ -12,6 +12,7 @@
 
 #include <acl/compression/compress.h>
 #include <acl/compression/track_error.h>
+#include <acl/database/null_database_streamer.h>
 #include <acl/decompression/decompress.h>
 #endif	// WITH_EDITORONLY_DATA
 
@@ -229,7 +230,7 @@ void UAnimBoneCompressionCodec_ACLDatabase::DecompressPose(FAnimSequenceDecompre
 {
 	const FACLDatabaseCompressedAnimData& AnimData = static_cast<const FACLDatabaseCompressedAnimData&>(DecompContext.CompressedAnimData);
 
-	acl::decompression_context<UE4DefaultDecompressionSettings, UE4DefaultDatabaseSettings> ACLContext;
+	acl::decompression_context<UE4DefaultDBDecompressionSettings> ACLContext;
 
 #if WITH_EDITORONLY_DATA
 	const acl::compressed_tracks* CompressedClipData = AnimData.GetCompressedTracks();
@@ -237,7 +238,7 @@ void UAnimBoneCompressionCodec_ACLDatabase::DecompressPose(FAnimSequenceDecompre
 
 	const acl::compressed_database* CompressedDatabase = AnimData.GetCompressedDatabase();
 
-	NullDatabaseStreamer Streamer(CompressedDatabase->get_bulk_data(), CompressedDatabase->get_bulk_data_size());
+	acl::null_database_streamer Streamer(CompressedDatabase->get_bulk_data(), CompressedDatabase->get_bulk_data_size());
 
 	acl::database_context<UE4DefaultDatabaseSettings> SequenceDatabaseContext;
 	SequenceDatabaseContext.initialize(ACLAllocatorImpl, *CompressedDatabase, Streamer);
@@ -284,7 +285,7 @@ void UAnimBoneCompressionCodec_ACLDatabase::DecompressBone(FAnimSequenceDecompre
 {
 	const FACLDatabaseCompressedAnimData& AnimData = static_cast<const FACLDatabaseCompressedAnimData&>(DecompContext.CompressedAnimData);
 
-	acl::decompression_context<UE4DefaultDecompressionSettings, UE4DefaultDatabaseSettings> ACLContext;
+	acl::decompression_context<UE4DefaultDBDecompressionSettings> ACLContext;
 
 #if WITH_EDITORONLY_DATA
 	const acl::compressed_tracks* CompressedClipData = AnimData.GetCompressedTracks();
@@ -292,7 +293,7 @@ void UAnimBoneCompressionCodec_ACLDatabase::DecompressBone(FAnimSequenceDecompre
 
 	const acl::compressed_database* CompressedDatabase = AnimData.GetCompressedDatabase();
 
-	NullDatabaseStreamer Streamer(CompressedDatabase->get_bulk_data(), CompressedDatabase->get_bulk_data_size());
+	acl::null_database_streamer Streamer(CompressedDatabase->get_bulk_data(), CompressedDatabase->get_bulk_data_size());
 
 	acl::database_context<UE4DefaultDatabaseSettings> SequenceDatabaseContext;
 	SequenceDatabaseContext.initialize(ACLAllocatorImpl, *CompressedDatabase, Streamer);
