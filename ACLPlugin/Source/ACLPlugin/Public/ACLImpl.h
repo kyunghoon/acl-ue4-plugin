@@ -77,10 +77,37 @@ struct UE4DebugDBDecompressionSettings final : public acl::debug_transform_decom
 	using database_settings_type = UE4DebugDatabaseSettings;
 };
 
+/** UE4 equivalents for some ACL enums */
+/** An enum for ACL rotation formats. */
+UENUM()
+enum ACLRotationFormat
+{
+	ACLRF_Quat_128 UMETA(DisplayName = "Quat Full Bit Rate"),
+	ACLRF_QuatDropW_96 UMETA(DisplayName = "Quat Drop W Full Bit Rate"),
+	ACLRF_QuatDropW_Variable UMETA(DisplayName = "Quat Drop W Variable Bit Rate"),
+};
+
+/** An enum for ACL Vector3 formats. */
+UENUM()
+enum ACLVectorFormat
+{
+	ACLVF_Vector3_96 UMETA(DisplayName = "Vector3 Full Bit Rate"),
+	ACLVF_Vector3_Variable UMETA(DisplayName = "Vector3 Variable Bit Rate"),
+};
+
+/** An enum for ACL compression levels. */
+UENUM()
+enum ACLCompressionLevel
+{
+	ACLCL_Lowest UMETA(DisplayName = "Lowest"),
+	ACLCL_Low UMETA(DisplayName = "Low"),
+	ACLCL_Medium UMETA(DisplayName = "Medium"),
+	ACLCL_High UMETA(DisplayName = "High"),
+	ACLCL_Highest UMETA(DisplayName = "Highest"),
+};
+
 /** Editor only utilities */
 #if WITH_EDITOR
-#include "AnimBoneCompressionCodec_ACLBase.h"
-
 #include <acl/compression/track_array.h>
 #include <acl/compression/compression_level.h>
 

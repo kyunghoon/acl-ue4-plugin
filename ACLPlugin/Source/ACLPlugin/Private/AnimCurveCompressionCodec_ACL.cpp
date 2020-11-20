@@ -5,6 +5,7 @@
 #include "ACLImpl.h"
 
 #if WITH_EDITORONLY_DATA
+#include "AnimationCompression.h"
 #include "Animation/MorphTarget.h"
 #include "Rendering/SkeletalMeshModel.h"
 

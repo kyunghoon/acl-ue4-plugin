@@ -2,6 +2,7 @@
 
 // Copyright 2020 Nicholas Frechette. All Rights Reserved.
 
+#include "AnimationCompression.h"
 #include "CoreMinimal.h"
 #include "HAL/UnrealMemory.h"
 
@@ -12,7 +13,7 @@
 // UE 4.25 doesn't expose its virtual memory management, see FPlatformMemory::FPlatformVirtualMemoryBlock
 #define WITH_VMEM_MANAGEMENT 0
 
-/** A simple async UE4 streamer. */
+/** A simple async UE4 streamer. Memory is allocated on the first stream in request and deallocated on the last stream out request. */
 class UE4DatabaseStreamer final : public acl::idatabase_streamer
 {
 public:
@@ -47,7 +48,7 @@ public:
 
 	virtual const uint8_t* get_bulk_data() const override { return BulkDataPtr; }
 
-	virtual void stream_in(uint32_t Offset, uint32_t Size, const std::function<void(bool success)>& Continuation) override
+	virtual void stream_in(uint32_t Offset, uint32_t Size, bool CanAllocateBulkData, const std::function<void(bool Success)>& Continuation) override
 	{
 		checkf(Offset < BulkDataSize, TEXT("Steam offset is outside of the bulk data range"));
 		checkf(Size <= BulkDataSize, TEXT("Stream size is larger than the bulk data size"));
@@ -66,20 +67,20 @@ public:
 
 		UE_LOG(LogAnimationCompression, Log, TEXT("ACL starting a new stream in request!"));
 
-#if WITH_VMEM_MANAGEMENT
-		// Commit our memory
-		if (!bIsBulkDataCommited)
+		// Allocate our bulk data buffer on the first stream in request
+		if (CanAllocateBulkData)
 		{
+			UE_LOG(LogAnimationCompression, Log, TEXT("ACL is allocating the database bulk data!"));
+
+#if WITH_VMEM_MANAGEMENT
+			check(!bIsBulkDataCommited);
 			StreamedBulkDataBlock.Commit();
 			bIsBulkDataCommited = true;
-		}
 #else
-		// Allocate our bulk data buffer on the first stream in request
-		if (BulkDataPtr == nullptr)
-		{
+			check(BulkDataPtr == nullptr);
 			BulkDataPtr = new uint8[BulkDataSize];
-		}
 #endif
+		}
 
 		// Fire off our async streaming request
 		PendingIORequest = StreamableBulkData.CreateStreamingRequest(Offset, Size, AIOP_Low, &AsyncFileCallBack, BulkDataPtr);
@@ -90,7 +91,7 @@ public:
 		}
 	}
 
-	virtual void stream_out(uint32_t Offset, uint32_t Size, const std::function<void(bool success)>& Continuation) override
+	virtual void stream_out(uint32_t Offset, uint32_t Size, bool CanDeallocateBulkData, const std::function<void()>& Continuation) override
 	{
 		checkf(Offset < BulkDataSize, TEXT("Steam offset is outside of the bulk data range"));
 		checkf(Size <= BulkDataSize, TEXT("Stream size is larger than the bulk data size"));
@@ -101,18 +102,25 @@ public:
 
 		UE_LOG(LogAnimationCompression, Log, TEXT("ACL is streaming out a database!"));
 
-		// Notify ACL that we streamed out the data, this is not thread safe and cannot run while animations are decompressing
-		Continuation(true);
+		// Free our bulk data on the last stream out request
+		if (CanDeallocateBulkData)
+		{
+			// TODO: Make this optional?
+			UE_LOG(LogAnimationCompression, Log, TEXT("ACL is deallocating the database bulk data!"));
 
 #if WITH_VMEM_MANAGEMENT
-		// Decommit our memory
-		// TODO: Make this optional?
-		if (bIsBulkDataCommited)
-		{
+			check(bIsBulkDataCommited);
 			StreamedBulkDataBlock.Decommit();
 			bIsBulkDataCommited = false;
-		}
+#else
+			check(BulkDataPtr != nullptr);
+			delete[] BulkDataPtr;
+			BulkDataPtr = nullptr;
 #endif
+		}
+
+		// Notify ACL that we streamed out the data, this is not thread safe and cannot run while animations are decompressing
+		Continuation();
 	}
 
 	void WaitForStreamingToComplete()
