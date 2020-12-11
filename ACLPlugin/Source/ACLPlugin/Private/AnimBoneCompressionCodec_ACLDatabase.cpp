@@ -28,7 +28,6 @@ void FACLDatabaseCompressedAnimData::SerializeCompressedData(FArchive& Ar)
 	if (!Ar.IsFilterEditorOnly())
 	{
 		Ar << CompressedClip;
-		Ar << CompressedDatabase;
 	}
 #endif
 }
@@ -86,18 +85,7 @@ bool FACLDatabaseCompressedAnimData::IsValid() const
 		return false;
 	}
 
-#if WITH_EDITORONLY_DATA
-	if (CompressedDatabase.Num() == 0)
-	{
-		return false;
-	}
-
-	const acl::compressed_database* CompressedDatabaseData = acl::make_compressed_database(CompressedDatabase.GetData());
-	if (CompressedDatabaseData == nullptr || CompressedDatabaseData->is_valid(false).any())
-	{
-		return false;
-	}
-#else
+#if !WITH_EDITORONLY_DATA
 	if (DatabaseContext == nullptr)
 	{
 		return false;
@@ -125,8 +113,10 @@ void UAnimBoneCompressionCodec_ACLDatabase::GetPreloadDependencies(TArray<UObjec
 	}
 }
 
-void UAnimBoneCompressionCodec_ACLDatabase::RegisterWithDatabase(const FCompressibleAnimData& CompressibleAnimData, acl::compressed_database* CompressedDatabase, FCompressibleAnimDataResult& OutResult)
+void UAnimBoneCompressionCodec_ACLDatabase::RegisterWithDatabase(const FCompressibleAnimData& CompressibleAnimData, FCompressibleAnimDataResult& OutResult)
 {
+	// TODO: UPDATE THIS COMMENT!!!
+
 	// After we are done compressing our animation sequence, it generated a database that contains only that single sequence.
 	// In the editor, we'll be able to use that database for playback.
 	// During cooking, the anim data serialization function will check if the sequence is contained within the database
@@ -143,8 +133,6 @@ void UAnimBoneCompressionCodec_ACLDatabase::RegisterWithDatabase(const FCompress
 	// able to use it in the cooked build but it will not support streaming since it will fully live in memory.
 	// A warning will be emitted that the mapping is stale and needs to be rebuilt.
 
-	check(CompressedDatabase != nullptr && CompressedDatabase->is_valid(false).empty());
-
 	FACLDatabaseCompressedAnimData& AnimData = static_cast<FACLDatabaseCompressedAnimData&>(*OutResult.AnimData);
 
 	// Store the sequence name hash since we need it in cooked builds to find our data
@@ -156,13 +144,6 @@ void UAnimBoneCompressionCodec_ACLDatabase::RegisterWithDatabase(const FCompress
 	// When we have a database, the compressed sequence data lives in the database, zero out the compressed byte buffer
 	// since we handle the data manually ourself
 	OutResult.CompressedByteStream.Empty(0);
-
-	// Copy the database data
-	const uint32 CompressedDatabaseSize = CompressedDatabase->get_size();
-
-	AnimData.CompressedDatabase.Empty(CompressedDatabaseSize);
-	AnimData.CompressedDatabase.AddUninitialized(CompressedDatabaseSize);
-	FMemory::Memcpy(AnimData.CompressedDatabase.GetData(), CompressedDatabase, CompressedDatabaseSize);
 }
 
 void UAnimBoneCompressionCodec_ACLDatabase::GetCompressionSettings(acl::compression_settings& OutSettings) const
@@ -236,14 +217,15 @@ void UAnimBoneCompressionCodec_ACLDatabase::DecompressPose(FAnimSequenceDecompre
 	const acl::compressed_tracks* CompressedClipData = AnimData.GetCompressedTracks();
 	check(CompressedClipData != nullptr && CompressedClipData->is_valid(false).empty());
 
-	const acl::compressed_database* CompressedDatabase = AnimData.GetCompressedDatabase();
+	//const acl::compressed_database* CompressedDatabase = AnimData.GetCompressedDatabase();
 
-	acl::null_database_streamer Streamer(CompressedDatabase->get_bulk_data(), CompressedDatabase->get_bulk_data_size());
+	//acl::null_database_streamer Streamer(CompressedDatabase->get_bulk_data(), CompressedDatabase->get_bulk_data_size());
 
-	acl::database_context<UE4DefaultDatabaseSettings> SequenceDatabaseContext;
-	SequenceDatabaseContext.initialize(ACLAllocatorImpl, *CompressedDatabase, Streamer);
+	//acl::database_context<UE4DefaultDatabaseSettings> SequenceDatabaseContext;
+	//SequenceDatabaseContext.initialize(ACLAllocatorImpl, *CompressedDatabase, Streamer);
 
-	ACLContext.initialize(*CompressedClipData, SequenceDatabaseContext);
+	//ACLContext.initialize(*CompressedClipData, SequenceDatabaseContext);
+	ACLContext.initialize(*CompressedClipData);
 
 	const ACLDBPreviewState PreviewState = DatabaseAsset != nullptr ? DatabaseAsset->PreviewState : ACLDBPreviewState::None;
 	switch (PreviewState)
@@ -251,11 +233,11 @@ void UAnimBoneCompressionCodec_ACLDatabase::DecompressPose(FAnimSequenceDecompre
 	default:
 	case ACLDBPreviewState::None:
 		// No preview state means we show the highest quality
-		SequenceDatabaseContext.stream_in();
+		//SequenceDatabaseContext.stream_in();
 		break;
 	case ACLDBPreviewState::HighQuality:
 		// Stream in our high quality data
-		SequenceDatabaseContext.stream_in();
+		//SequenceDatabaseContext.stream_in();
 		break;
 	case ACLDBPreviewState::LowQuality:
 		// Lowest quality means nothing is streamed in
@@ -291,14 +273,15 @@ void UAnimBoneCompressionCodec_ACLDatabase::DecompressBone(FAnimSequenceDecompre
 	const acl::compressed_tracks* CompressedClipData = AnimData.GetCompressedTracks();
 	check(CompressedClipData != nullptr && CompressedClipData->is_valid(false).empty());
 
-	const acl::compressed_database* CompressedDatabase = AnimData.GetCompressedDatabase();
+	//const acl::compressed_database* CompressedDatabase = AnimData.GetCompressedDatabase();
 
-	acl::null_database_streamer Streamer(CompressedDatabase->get_bulk_data(), CompressedDatabase->get_bulk_data_size());
+	//acl::null_database_streamer Streamer(CompressedDatabase->get_bulk_data(), CompressedDatabase->get_bulk_data_size());
 
-	acl::database_context<UE4DefaultDatabaseSettings> SequenceDatabaseContext;
-	SequenceDatabaseContext.initialize(ACLAllocatorImpl, *CompressedDatabase, Streamer);
+	//acl::database_context<UE4DefaultDatabaseSettings> SequenceDatabaseContext;
+	//SequenceDatabaseContext.initialize(ACLAllocatorImpl, *CompressedDatabase, Streamer);
 
-	ACLContext.initialize(*CompressedClipData, SequenceDatabaseContext);
+	//ACLContext.initialize(*CompressedClipData, SequenceDatabaseContext);
+	ACLContext.initialize(*CompressedClipData);
 
 	const ACLDBPreviewState PreviewState = DatabaseAsset != nullptr ? DatabaseAsset->PreviewState : ACLDBPreviewState::None;
 	switch (PreviewState)
@@ -306,11 +289,11 @@ void UAnimBoneCompressionCodec_ACLDatabase::DecompressBone(FAnimSequenceDecompre
 	default:
 	case ACLDBPreviewState::None:
 		// No preview state means we show the highest quality
-		SequenceDatabaseContext.stream_in();
+		//SequenceDatabaseContext.stream_in();
 		break;
 	case ACLDBPreviewState::HighQuality:
 		// Stream in our high quality data
-		SequenceDatabaseContext.stream_in();
+		//SequenceDatabaseContext.stream_in();
 		break;
 	case ACLDBPreviewState::LowQuality:
 		// Lowest quality means nothing is streamed in

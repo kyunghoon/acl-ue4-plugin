@@ -61,25 +61,14 @@ void UAnimBoneCompressionCodec_ACL::GetCompressionSettings(acl::compression_sett
 	OutSettings.level = GetCompressionLevel(CompressionLevel);
 }
 
-ACLSafetyFallbackResult UAnimBoneCompressionCodec_ACL::ExecuteSafetyFallback(acl::iallocator& Allocator, const acl::compression_settings& Settings, const acl::track_array_qvvf& RawClip, const acl::track_array_qvvf& BaseClip, const acl::compressed_tracks& CompressedClipData, const acl::compressed_database* CompressedDatabase, const FCompressibleAnimData& CompressibleAnimData, FCompressibleAnimDataResult& OutResult)
+ACLSafetyFallbackResult UAnimBoneCompressionCodec_ACL::ExecuteSafetyFallback(acl::iallocator& Allocator, const acl::compression_settings& Settings, const acl::track_array_qvvf& RawClip, const acl::track_array_qvvf& BaseClip, const acl::compressed_tracks& CompressedClipData, const FCompressibleAnimData& CompressibleAnimData, FCompressibleAnimDataResult& OutResult)
 {
 	if (SafetyFallbackCodec != nullptr && SafetyFallbackThreshold > 0.0f)
 	{
 		checkSlow(CompressedClipData.is_valid(true).empty());
 
 		acl::decompression_context<UE4DefaultDBDecompressionSettings> Context;
-		acl::database_context<UE4DefaultDatabaseSettings> DatabaseContext;
-		if (CompressedDatabase != nullptr)
-		{
-			checkSlow(CompressedDatabase->is_valid(true).empty());
-
-			DatabaseContext.initialize(Allocator, *CompressedDatabase);
-			Context.initialize(CompressedClipData, DatabaseContext);
-		}
-		else
-		{
-			Context.initialize(CompressedClipData);
-		}
+		Context.initialize(CompressedClipData);
 
 		const acl::track_error TrackError = acl::calculate_compression_error(Allocator, RawClip, Context, *Settings.error_metric, BaseClip);
 		if (TrackError.error >= SafetyFallbackThreshold)

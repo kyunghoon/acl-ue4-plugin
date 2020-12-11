@@ -227,14 +227,15 @@ void FACLPlugin::ListCodecs(const TArray<FString>& Args)
 
 		const acl::compressed_database* CompressedDatabase = acl::make_compressed_database(Database->CompressedBytes.GetData());
 
-		const uint32 DatabaseSize = CompressedDatabase != nullptr ? CompressedDatabase->get_total_size() : 0;
-		const uint32 StreamableSize = CompressedDatabase != nullptr ? CompressedDatabase->get_bulk_data_size() : 0;
-		const uint32 SequencesSize = Database->CompressedBytes.Num() - DatabaseSize;
+		const uint32 DatabaseTotalSize = CompressedDatabase != nullptr ? CompressedDatabase->get_total_size() : 0;
+		const uint32 DatabaseSize = CompressedDatabase != nullptr ? CompressedDatabase->get_size() : 0;
+		const uint32 DatabaseBulkDataSize = CompressedDatabase != nullptr ? CompressedDatabase->get_bulk_data_size() : 0;
+		const uint32 SequencesSize = Database->CompressedBytes.Num() - DatabaseSize;	// CompressedBytes contains the DB metadata and the sequences but not the bulk data
 
 		UE_LOG(LogAnimationCompression, Log, TEXT("%s ..."), *Database->GetPathName());
 		UE_LOG(LogAnimationCompression, Log, TEXT("    used by %d / %d (%.1f %%) anim sequences"), NumReferences, AnimSequences.Num(), Percentage(NumReferences, AnimSequences.Num()));
 		UE_LOG(LogAnimationCompression, Log, TEXT("    sequences use %.2f MB"), BytesToMB(SequencesSize));
-		UE_LOG(LogAnimationCompression, Log, TEXT("    database uses %.2f MB (%.2f MB streamable)"), BytesToMB(DatabaseSize), BytesToMB(StreamableSize));
+		UE_LOG(LogAnimationCompression, Log, TEXT("    database uses %.2f MB (%.2f MB streamable)"), BytesToMB(DatabaseTotalSize), BytesToMB(DatabaseBulkDataSize));
 	}
 
 	LogAnimationCompression.SetVerbosity(OldVerbosity);

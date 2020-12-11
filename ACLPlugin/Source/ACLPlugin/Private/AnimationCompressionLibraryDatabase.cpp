@@ -52,55 +52,44 @@ void UAnimationCompressionLibraryDatabase::PreSave(const ITargetPlatform* Target
 			return;	// Nothing to cook
 		}
 
-		TArray<acl::database_merge_mapping> ACLDatabaseMappings;
-		for (UAnimSequence* AnimSeq : CookedSequences)
+		TArray<const acl::compressed_tracks*> ACLCompressedTracks;
+		for (const UAnimSequence* AnimSeq : CookedSequences)
 		{
-			FACLDatabaseCompressedAnimData& AnimData = static_cast<FACLDatabaseCompressedAnimData&>(*AnimSeq->CompressedData.CompressedDataStructure);
-
-			// Duplicate the compressed clip since we'll modify it
-			const int32 CompressedSize = AnimData.CompressedClip.Num();
-			uint8* CompressedTracks = reinterpret_cast<uint8*>(GMalloc->Malloc(CompressedSize, 16));
-			FMemory::Memcpy(CompressedTracks, AnimData.CompressedClip.GetData(), CompressedSize);
-
-			acl::database_merge_mapping ACLMapping;
-			ACLMapping.tracks = acl::make_compressed_tracks(CompressedTracks);
-			ACLMapping.database = AnimData.GetCompressedDatabase();
-
-			check(ACLMapping.tracks != nullptr);
-
-			ACLDatabaseMappings.Add(ACLMapping);
+			const FACLDatabaseCompressedAnimData& AnimData = static_cast<const FACLDatabaseCompressedAnimData&>(*AnimSeq->CompressedData.CompressedDataStructure);
+			ACLCompressedTracks.Add(AnimData.GetCompressedTracks());
 		}
+
+		const int32 NumSequences = ACLCompressedTracks.Num();
 
 		acl::compression_database_settings Settings;	// Use defaults
 
+		TArray<acl::compressed_tracks*> ACLDBCompressedTracks;
+		ACLDBCompressedTracks.AddZeroed(NumSequences);
+
 		acl::compressed_database* MergedDB = nullptr;
-		const acl::error_result MergeResult = acl::merge_compressed_databases(ACLAllocatorImpl, Settings, ACLDatabaseMappings.GetData(), ACLDatabaseMappings.Num(), MergedDB);
+		acl::error_result MergeResult = acl::build_database(ACLAllocatorImpl, Settings, ACLCompressedTracks.GetData(), NumSequences, ACLDBCompressedTracks.GetData(), MergedDB);
 
 		if (!MergeResult.empty())
 		{
 			// Free our duplicate compressed clips
-			for (const acl::database_merge_mapping& Mapping : ACLDatabaseMappings)
-			{
-				GMalloc->Free(Mapping.tracks);
-			}
-
 			UE_LOG(LogAnimationCompression, Warning, TEXT("ACL failed to merge databases: %s"), ANSI_TO_TCHAR(MergeResult.c_str()));
 			return;
 		}
 
-		checkSlow(MergedDB->is_valid(true).empty());
-
 #if DO_GUARD_SLOW
 		// Sanity check that the database is properly constructed
 		{
+			checkSlow(MergedDB->is_valid(true).empty());
+
 			acl::database_context<UE4DefaultDatabaseSettings> DebugDatabaseContext;
 			const bool ContextInitResult = DebugDatabaseContext.initialize(ACLAllocatorImpl, *MergedDB);
 			checkf(ContextInitResult, TEXT("ACL failed to initialize the database context"));
 
-			for (const acl::database_merge_mapping& Mapping : ACLDatabaseMappings)
+			for (const acl::compressed_tracks* CompressedTracks : ACLDBCompressedTracks)
 			{
-				check(MergedDB->contains(*Mapping.tracks));
-				check(DebugDatabaseContext.contains(*Mapping.tracks));
+				checkSlow(CompressedTracks->is_valid(true).empty());
+				checkSlow(MergedDB->contains(*CompressedTracks));
+				checkSlow(DebugDatabaseContext.contains(*CompressedTracks));
 			}
 		}
 #endif
@@ -112,13 +101,14 @@ void UAnimationCompressionLibraryDatabase::PreSave(const ITargetPlatform* Target
 
 		// Free the merged instance we no longer need
 		ACLAllocatorImpl.deallocate(MergedDB, MergedDB->get_size());
+		MergedDB = nullptr;
 
 		if (!SplitResult.empty())
 		{
-			// Free our duplicate compressed clips
-			for (const acl::database_merge_mapping& Mapping : ACLDatabaseMappings)
+			// Free our clip copies
+			for (acl::compressed_tracks* CompressedTracks : ACLDBCompressedTracks)
 			{
-				GMalloc->Free(Mapping.tracks);
+				ACLAllocatorImpl.deallocate(CompressedTracks, CompressedTracks->get_size());
 			}
 
 			UE_LOG(LogAnimationCompression, Warning, TEXT("ACL failed to split database: %s"), ANSI_TO_TCHAR(SplitResult.c_str()));
@@ -138,12 +128,14 @@ void UAnimationCompressionLibraryDatabase::PreSave(const ITargetPlatform* Target
 		// index at runtime in O(logN) in the sorted names array, and read the offset we need in the other.
 		// TODO: Use perfect hashing to bring it to O(1)
 
-		const int32 NumMappings = ACLDatabaseMappings.Num();
-		CookedAnimSequenceMappings.Empty(NumMappings);
-		for (int32 MappingIndex = 0; MappingIndex < NumMappings; ++MappingIndex)
+		SIZE_T TotalSizeSeqOld = 0;
+		SIZE_T TotalSizeSeqNew = 0;
+
+		CookedAnimSequenceMappings.Empty(NumSequences);
+		for (int32 MappingIndex = 0; MappingIndex < NumSequences; ++MappingIndex)
 		{
 			UAnimSequence* AnimSeq = CookedSequences[MappingIndex];
-			const acl::database_merge_mapping& Mapping = ACLDatabaseMappings[MappingIndex];
+			const acl::compressed_tracks* CompressedTracks = ACLDBCompressedTracks[MappingIndex];
 			FACLDatabaseCompressedAnimData& AnimData = static_cast<FACLDatabaseCompressedAnimData&>(*AnimSeq->CompressedData.CompressedDataStructure);
 
 			// Align our sequence to 16 bytes
@@ -153,8 +145,15 @@ void UAnimationCompressionLibraryDatabase::PreSave(const ITargetPlatform* Target
 			CookedAnimSequenceMappings.Add((uint64(AnimData.SequenceNameHash) << 32) | uint64(CompressedSequenceOffset));
 
 			// Increment our offset but don't align since we don't want to add unnecesary padding at the end of the last sequence
-			CompressedSequenceOffset += Mapping.tracks->get_size();
+			CompressedSequenceOffset += CompressedTracks->get_size();
+
+			TotalSizeSeqOld += ACLCompressedTracks[MappingIndex]->get_size();
+			TotalSizeSeqNew += CompressedTracks->get_size();
 		}
+
+		auto BytesToMB = [](SIZE_T NumBytes) { return (double)NumBytes / (1024.0 * 1024.0); };
+
+		UE_LOG(LogAnimationCompression, Log, TEXT("ACL DB [%s] Sequences (%u) went from %.2f MB -> %.2f MB. DB is %.2f MB (%.2f MB + %.2f MB)"), *GetPathName(), NumSequences, BytesToMB(TotalSizeSeqOld), BytesToMB(TotalSizeSeqNew), BytesToMB(SplitDB->get_total_size()), BytesToMB(SplitDB->get_size()), BytesToMB(SplitDB->get_bulk_data_size()));
 
 		// Make sure to sort our array, it'll be sorted by hash first since it lives in the top bits
 		CookedAnimSequenceMappings.Sort();
@@ -170,16 +169,16 @@ void UAnimationCompressionLibraryDatabase::PreSave(const ITargetPlatform* Target
 		// Copy our compressed clips
 		CompressedSequenceOffset = acl::align_to(CompressedDatabaseSize, 16);	// Reset
 
-		for (const acl::database_merge_mapping& Mapping : ACLDatabaseMappings)
+		for (const acl::compressed_tracks* CompressedTracks : ACLDBCompressedTracks)
 		{
 			// Align our sequence to 16 bytes
 			CompressedSequenceOffset = acl::align_to(CompressedSequenceOffset, 16);
 
 			// Copy our data
-			FMemory::Memcpy(CompressedBytes.GetData() + CompressedSequenceOffset, Mapping.tracks, Mapping.tracks->get_size());
+			FMemory::Memcpy(CompressedBytes.GetData() + CompressedSequenceOffset, CompressedTracks, CompressedTracks->get_size());
 
 			// Increment our offset but don't align since we don't want to add unnecesary padding at the end of the last sequence
-			CompressedSequenceOffset += Mapping.tracks->get_size();
+			CompressedSequenceOffset += CompressedTracks->get_size();
 		}
 
 		// Copy our bulk data
@@ -196,10 +195,10 @@ void UAnimationCompressionLibraryDatabase::PreSave(const ITargetPlatform* Target
 		ACLAllocatorImpl.deallocate(SplitDB, CompressedDatabaseSize);
 		ACLAllocatorImpl.deallocate(SplitDBBulkData, BulkDataSize);
 
-		// Free our duplicate compressed clips
-		for (const acl::database_merge_mapping& Mapping : ACLDatabaseMappings)
+		// Free our clip copies
+		for (acl::compressed_tracks* CompressedTracks : ACLDBCompressedTracks)
 		{
-			GMalloc->Free(Mapping.tracks);
+			ACLAllocatorImpl.deallocate(CompressedTracks, CompressedTracks->get_size());
 		}
 	}
 }
